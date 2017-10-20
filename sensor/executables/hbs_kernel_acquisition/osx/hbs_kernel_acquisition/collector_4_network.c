@@ -49,9 +49,7 @@ typedef struct
     RBOOL isConnected;
     RBOOL isAllowed;
     int addrFamily;
-    int sockType;
-    struct sockaddr_in peerAtConnect4;
-    struct sockaddr_in6 peerAtConnect6;
+    RBOOL isComplete;
     KernelAcqNetwork netEvent;
     
 } SockCookie;
@@ -155,29 +153,6 @@ RBOOL
 }
 
 static
-RVOID
-    tryFindingPID
-    (
-        SockCookie* sc,
-        RBOOL isOverride
-    )
-{
-    RU32 curPid = 0;
-    if( NULL != sc )
-    {
-        if( isOverride || 0 == sc->netEvent.pid )
-        {
-            curPid = proc_selfpid();
-            if( 0 != curPid )
-            {
-                sc->netEvent.pid = curPid;
-                rpal_debug_info("UNK PID TO %d", curPid);
-            }
-        }
-    }
-}
-
-static
 errno_t
     cbAttach
     (
@@ -215,13 +190,12 @@ errno_t
             if( NULL != ( sc = rpal_memory_alloc( sizeof( SockCookie ) ) ) )
             {
                 sc->addrFamily = addrFamily;
-                sc->sockType = sockType;
                 sc->netEvent.proto = (RU8)protocol;
                 sc->netEvent.ts = rpal_time_getLocal();
-                sc->netEvent.pid = 0;
-                tryFindingPID( sc, TRUE );
+                sc->netEvent.pid = proc_selfpid();
                 sc->isReported = FALSE;
                 sc->isAllowed = FALSE;
+                sc->isComplete = FALSE;
                 
                 *cookie = sc;
                 ret = KERN_SUCCESS;
@@ -284,6 +258,18 @@ RBOOL
     
     if( NULL != sc )
     {
+        if( sc->isComplete )
+        {
+            return TRUE;
+        }
+
+        if( 0 == sc->netEvent.pid )
+        {
+            sc->netEvent.pid = proc_selfpid();
+
+            sc->isComplete = TRUE;
+        }
+
         if( PF_INET == sc->addrFamily )
         {
             isIpV6 = FALSE;
@@ -293,26 +279,23 @@ RBOOL
             isIpV6 = TRUE;
         }
         
-        tryFindingPID( sc, FALSE );
-        
         if( !isIpV6 )
         {
             if( 0 != ( ret = sock_getsockname( so, (struct sockaddr*)&local4, sizeof( local4 ) ) ) )
             {
                 rpal_debug_info( "^^^^^^ ERROR getting local sockname4: %d", ret );
+                sc->isComplete = FALSE;
             }
-            
-            if( 0 != ( ret = sock_getpeername( so, (struct sockaddr*)&remote4, sizeof( remote4 ) ) ) ||
-                0 == remote4.sin_addr.s_addr )
+
+            if( NULL != remote )
             {
-                if( NULL != remote )
-                {
-                    memcpy( &remote4, (struct sockaddr_in*)remote, sizeof( remote4 ) );
-                }
-                else if( 0 != sc->peerAtConnect4.sin_addr.s_addr )
-                {
-                    memcpy( &remote4, &sc->peerAtConnect4, sizeof( remote4 ) );
-                }
+                memcpy( &remote4, ( struct sockaddr_in* )remote, sizeof( remote4 ) );
+            }
+            else if( 0 != ( ret = sock_getpeername( so, ( struct sockaddr* )&remote4, sizeof( remote4 ) ) ) ||
+                     0 == remote4.sin_addr.s_addr )
+            {
+                rpal_debug_info( "^^^^^^ ERROR getting remote sockname5: %d", ret );
+                sc->isComplete = FALSE;
             }
         }
         else
@@ -321,11 +304,17 @@ RBOOL
             if( 0 != ( ret = sock_getsockname( so, (struct sockaddr*)&local6, sizeof( local6 ) ) ) )
             {
                 rpal_debug_info( "^^^^^^ ERROR getting local sockname6: %d", ret );
+                sc->isComplete = FALSE;
             }
-            if( 0 != ( ret = sock_getpeername( so, (struct sockaddr*)&remote6, sizeof( remote6 ) ) ) &&
-                NULL != remote )
+
+            if( NULL != remote )
             {
-                memcpy( &remote6, (struct sockaddr_in6*)remote, sizeof( remote6 ) );
+                memcpy( &remote6, ( struct sockaddr_in6* )remote, sizeof( remote6 ) );
+            }
+            else if( 0 != ( ret = sock_getpeername( so, (struct sockaddr*)&remote6, sizeof( remote6 ) ) ) )
+            {
+                rpal_debug_info( "^^^^^^ ERROR getting remote sockname6: %d", ret );
+                sc->isComplete = FALSE;
             }
         }
         
@@ -380,26 +369,6 @@ RBOOL
             }
         }
         
-        if( !isIpV6 )
-        {
-            // rpal_debug_info( "^^^^^^ CONNECTION V4 %d (%d): incoming=%d 0x%08X:%d ---> 0x%08X:%d",
-            //                  (RU32)sc->netEvent.pid,
-            //                  (RU32)sc->netEvent.proto,
-            //                  (RU32)sc->netEvent.isIncoming,
-            //                  sc->netEvent.srcIp.value.v4,
-            //                  (RU32)sc->netEvent.srcPort,
-            //                  sc->netEvent.dstIp.value.v4,
-            //                  (RU32)sc->netEvent.dstPort );
-        }
-        else
-        {
-            // rpal_debug_info( "^^^^^^ CONNECTION V6 (%d): incoming=%d %d ---> %d",
-            //                  (RU32)sc->netEvent.proto,
-            //                  (RU32)sc->netEvent.isIncoming,
-            //                  (RU32)sc->netEvent.srcPort,
-            //                  (RU32)sc->netEvent.dstPort );
-        }
-        
         isPopulated = TRUE;
     }
     
@@ -428,6 +397,8 @@ errno_t
     
     if( NULL != cookie )
     {
+        populateCookie( sc, so, from );
+
         // Report on the connection event
         if( !sc->isReported )
         {
@@ -436,11 +407,9 @@ errno_t
                 sc->netEvent.isIncoming = TRUE;
             }
             
-            populateCookie( sc, so, from );
-
             if( !isConnectionAllowed( sc ) )
             {
-                return EHOSTUNREACH;
+                return EPERM;
             }
             
             rpal_mutex_lock( g_collector_4_mutex );
@@ -454,7 +423,7 @@ errno_t
 
         if( !isConnectionAllowed( sc ) )
         {
-            return EHOSTUNREACH;
+            return EPERM;
         }
         
         // See if we need to report on any content based parsing
@@ -525,16 +494,16 @@ errno_t
     if( NULL != cookie &&
         !sc->isReported )
     {
+        populateCookie( sc, so, to );
+
         if( !sc->isConnected )
         {
             sc->netEvent.isIncoming = FALSE;
         }
-        
-        populateCookie( sc, so, to );
 
         if( !isConnectionAllowed( sc ) )
         {
-            return EHOSTUNREACH;
+            return EPERM;
         }
         
         rpal_mutex_lock( g_collector_4_mutex );
@@ -564,14 +533,12 @@ errno_t
     {
         sc->netEvent.isIncoming = TRUE;
         sc->isConnected = TRUE;
-        
-        tryFindingPID( sc, TRUE );
 
         populateCookie( sc, so, from );
 
         if( !isConnectionAllowed( sc ) )
         {
-            return EHOSTUNREACH;
+            return EPERM;
         }
     }
     
@@ -594,13 +561,11 @@ errno_t
         sc->netEvent.isIncoming = FALSE;
         sc->isConnected = TRUE;
         
-        tryFindingPID( sc, TRUE );
-        
         populateCookie( sc, so, to );
 
         if( !isConnectionAllowed( sc ) )
         {
-            return EHOSTUNREACH;
+            return EPERM;
         }
     }
     

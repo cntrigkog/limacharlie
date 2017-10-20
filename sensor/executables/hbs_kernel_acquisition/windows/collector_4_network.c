@@ -468,7 +468,7 @@ RVOID
 
     if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
     {
-        result->actionType = FWP_ACTION_CONTINUE;
+        result->actionType = FWP_ACTION_PERMIT;
     }
 
     KeAcquireInStackQueuedSpinLock( &g_collector_4_mutex, &hMutex );
@@ -479,20 +479,22 @@ RVOID
         if( g_is_network_segregated )
         {
             if( IPPROTO_UDP == g_connections[ g_nextConnection ].proto &&
-                53 == g_connections[ g_nextConnection ].dstPort )
+                ( 53 == g_connections[ g_nextConnection ].dstPort ||
+                  ( 135 == g_connections[ g_nextConnection ].srcPort &&
+                    0 == g_connections[ g_nextConnection ].dstPort ) ||
+                  ( 546 == g_connections[ g_nextConnection ].srcPort &&
+                    547 == g_connections[ g_nextConnection ].dstPort ) ) )
             {
-                // Alawys allow outbound DNS.
+                // Alawys allow outbound DNS, Windows name resolution and DHCP.
             }
-            else if( !FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) ||
-                (RU32)metaVals->processId != g_owner_pid )
+            else if( FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) &&
+                     (RU32)metaVals->processId != g_owner_pid )
             {
-                if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
-                {
-                    result->rights &= ~FWPS_RIGHT_ACTION_WRITE;
-                    result->actionType = FWP_ACTION_BLOCK;
-                    KeReleaseInStackQueuedSpinLock( &hMutex );
-                    return;
-                }
+                result->rights &= ~FWPS_RIGHT_ACTION_WRITE;
+                result->actionType = FWP_ACTION_BLOCK;
+                rpal_debug_kernel( "blocking (%d != %d) %d -> %d", (RU32)metaVals->processId, g_owner_pid, g_connections[ g_nextConnection ].srcPort, g_connections[ g_nextConnection ].dstPort );
+                KeReleaseInStackQueuedSpinLock( &hMutex );
+                return;
             }
         }
 
@@ -540,7 +542,7 @@ RVOID
 
     if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
     {
-        result->actionType = FWP_ACTION_CONTINUE;
+        result->actionType = FWP_ACTION_PERMIT;
     }
 
     KeAcquireInStackQueuedSpinLock( &g_collector_4_mutex, &hMutex );
@@ -551,20 +553,22 @@ RVOID
         if( g_is_network_segregated )
         {
             if( IPPROTO_UDP == g_connections[ g_nextConnection ].proto &&
-                53 == g_connections[ g_nextConnection ].srcPort )
+                ( 53 == g_connections[ g_nextConnection ].srcPort ||
+                  ( 135 == g_connections[ g_nextConnection ].dstPort &&
+                    0 == g_connections[ g_nextConnection ].srcPort ) ||
+                  ( 546 == g_connections[ g_nextConnection ].dstPort &&
+                    547 == g_connections[ g_nextConnection ].srcPort ) ) )
             {
                 // Alawys allow outbound DNS.
             }
-            else if( !FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) ||
+            else if( FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) &&
                      (RU32)metaVals->processId != g_owner_pid )
             {
-                if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
-                {
-                    result->rights &= ~FWPS_RIGHT_ACTION_WRITE;
-                    result->actionType = FWP_ACTION_BLOCK;
-                    KeReleaseInStackQueuedSpinLock( &hMutex );
-                    return;
-                }
+                result->rights &= ~FWPS_RIGHT_ACTION_WRITE;
+                result->actionType = FWP_ACTION_BLOCK;
+                rpal_debug_kernel( "blocking (%d != %d) %d -> %d", (RU32)metaVals->processId, g_owner_pid, g_connections[ g_nextConnection ].srcPort, g_connections[ g_nextConnection ].dstPort );
+                KeReleaseInStackQueuedSpinLock( &hMutex );
+                return;
             }
         }
 
@@ -618,27 +622,29 @@ RVOID
 
     if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
     {
-        result->actionType = FWP_ACTION_CONTINUE;
+        result->actionType = FWP_ACTION_PERMIT;
     }
 
     // If network is being segregated, check if the requestor is our owner.
     if( g_is_network_segregated &&
         getIpTuple( fixVals->layerId, fixVals, &netEntry ) )
     {
-        if( IPPROTO_UDP == netEntry.proto &&
-            53 == netEntry.srcPort )
+        if( IPPROTO_UDP == g_connections[ g_nextConnection ].proto &&
+            ( 53 == g_connections[ g_nextConnection ].srcPort ||
+              ( 135 == g_connections[ g_nextConnection ].dstPort &&
+                0 == g_connections[ g_nextConnection ].srcPort ) ||
+              ( 546 == g_connections[ g_nextConnection ].dstPort &&
+                547 == g_connections[ g_nextConnection ].srcPort ) ) )
         {
             // Alawys allow outbound DNS.
         }
-        else if( !FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) ||
+        else if( FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) &&
                  (RU32)metaVals->processId != g_owner_pid )
         {
-            if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
-            {
-                result->rights &= ~FWPS_RIGHT_ACTION_WRITE;
-                result->actionType = FWP_ACTION_BLOCK;
-                return;
-            }
+            result->rights &= ~FWPS_RIGHT_ACTION_WRITE;
+            result->actionType = FWP_ACTION_BLOCK;
+            rpal_debug_kernel( "blocking (%d != %d) %d -> %d", (RU32)metaVals->processId, g_owner_pid, netEntry.srcPort, netEntry.dstPort );
+            return;
         }
     }
 
@@ -756,32 +762,34 @@ RVOID
     UNREFERENCED_PARAMETER( flowCtx );
     UNREFERENCED_PARAMETER( metaVals );
 
+    if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
+    {
+        result->actionType = FWP_ACTION_PERMIT;
+    }
+
     // Here we don't care about doing any processing other than deny on segregated network.
 
     // If network is being segregated, check if the requestor is our owner.
     if( g_is_network_segregated &&
         getIpTuple( fixVals->layerId, fixVals, &netEntry ) )
     {
-        if( IPPROTO_UDP == netEntry.proto &&
-            53 == netEntry.dstPort )
+        if( IPPROTO_UDP == g_connections[ g_nextConnection ].proto &&
+            ( 53 == g_connections[ g_nextConnection ].dstPort ||
+              ( 135 == g_connections[ g_nextConnection ].srcPort &&
+                0 == g_connections[ g_nextConnection ].dstPort ) ||
+              ( 546 == g_connections[ g_nextConnection ].srcPort &&
+                547 == g_connections[ g_nextConnection ].dstPort ) ) )
         {
             // Alawys allow outbound DNS.
         }
-        else if( !FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) ||
-            (RU32)metaVals->processId != g_owner_pid )
+        else if( FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) &&
+                 (RU32)metaVals->processId != g_owner_pid )
         {
-            if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
-            {
-                result->rights &= ~FWPS_RIGHT_ACTION_WRITE;
-                result->actionType = FWP_ACTION_BLOCK;
-                return;
-            }
+            result->rights &= ~FWPS_RIGHT_ACTION_WRITE;
+            result->actionType = FWP_ACTION_BLOCK;
+            rpal_debug_kernel( "blocking (%d != %d) %d -> %d", (RU32)metaVals->processId, g_owner_pid, netEntry.srcPort, netEntry.dstPort );
+            return;
         }
-    }
-
-    if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
-    {
-        result->actionType = FWP_ACTION_CONTINUE;
     }
 }
 
@@ -946,7 +954,7 @@ static NTSTATUS
         filter.filterKey = g_layers[ i ]->flGuid;
         filter.layerKey = g_layers[ i ]->guid;
         filter.displayData.name = g_layers[ i ]->flName;
-        filter.action.type = FWP_ACTION_CALLOUT_INSPECTION;
+        filter.action.type = FWP_ACTION_CALLOUT_TERMINATING;
         filter.action.calloutKey = g_layers[ i ]->coGuid;
         filter.subLayerKey = g_layers[ i ]->slGuid;
         filter.weight.type = FWP_EMPTY;

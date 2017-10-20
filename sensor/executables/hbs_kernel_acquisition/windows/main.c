@@ -218,6 +218,7 @@ NTSTATUS
         else
         {
             g_owner_pid = IoGetRequestorProcessId( Irp );
+            rpal_debug_kernel( "connected to %d", g_owner_pid );
             g_is_connected = TRUE;
         }
         KeReleaseInStackQueuedSpinLock( &hMutex );
