@@ -23,6 +23,7 @@ limitations under the License.
 #include <rpHostCommonPlatformLib/rTags.h>
 #include <kernelAcquisitionLib/kernelAcquisitionLib.h>
 #include <networkLib/networkLib.h>
+#include <rpHostCommonPlatformIFaceLib/rpHostCommonPlatformIFaceLib.h>
 
 #define _HISTORY_MAX_LENGTH     (1000)
 #define _HISTORY_MAX_SIZE       (1024*1024*5)
@@ -551,9 +552,22 @@ RVOID
     )
 {
     RU32 errorCode = RPAL_ERROR_SUCCESS;
+    RU32 i = 0;
 
     UNREFERENCED_PARAMETER( notifId );
     UNREFERENCED_PARAMETER( notif );
+
+    // Since we may be getting segregated as soon as we get online, let's give
+    // a chance to the kernel acquisition driver to get loaded if possible.
+    for( i = 0; i < 3; i++ )
+    {
+        if( kAcq_isAvailable() )
+        {
+            break;
+        }
+
+        rpal_thread_sleep( MSEC_FROM_SEC( 1 ) );
+    }
 
     if( kAcq_isAvailable() )
     {
@@ -565,6 +579,11 @@ RVOID
         else
         {
             rpal_debug_info( "network segregation successful" );
+
+            // We use a little trick for backward compatibility to trigger a disconnection
+            // of HCP even though we don't have a direct API to that. We do this to make sure
+            // our connection has not gone stale somehow when segregating.
+            rpHcpI_sendHome( NULL );
         }
     }
     else
@@ -591,7 +610,20 @@ RVOID
 
     if( kAcq_isAvailable() )
     {
-        kAcq_rejoinNetwork();
+        if( !kAcq_rejoinNetwork() )
+        {
+            rpal_debug_error( "failed to rejoin network" );
+            errorCode = RPAL_ERROR_NOT_SUPPORTED;
+        }
+        else
+        {
+            rpal_debug_info( "network rejoined" );
+
+            // We use a little trick for backward compatibility to trigger a disconnection
+            // of HCP even though we don't have a direct API to that. We do this to make sure
+            // our connection has not gone stale somehow when segregating.
+            rpHcpI_sendHome( NULL );
+        }
     }
     else
     {

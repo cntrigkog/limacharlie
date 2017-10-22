@@ -566,7 +566,7 @@ RBOOL
 
     RU32 error = 0;
 
-    if( 0 == ( error = _krnlSendReceive( KERNEL_ACQ_OP_SEGRAGATE,
+    if( 0 == ( error = _krnlSendReceive( KERNEL_ACQ_OP_REJOIN,
                                          NULL,
                                          0,
                                          NULL,

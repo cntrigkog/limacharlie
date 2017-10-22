@@ -49,8 +49,8 @@ limitations under the License.
 #define FRAME_MAX_SIZE      (1024 * 1024 * 50)
 #define CLOUD_SYNC_TIMEOUT  (MSEC_FROM_SEC(60 * 10))
 #define TLS_CONNECT_TIMEOUT (30)
-#define TLS_SEND_TIMEOUT    (60 * 1)
-#define TLS_RECV_TIMEOUT    (60 * 1)
+#define TLS_FIRST_RECV_TIMEOUT (10)
+#define TLS_NORMAL_RECV_TIMEOUT (60 * 60 * 24)
 
 RPRIVATE
 struct
@@ -624,6 +624,30 @@ RU32
 }
 
 RPRIVATE
+RVOID
+    closeCloudConnection
+    (
+
+    )
+{
+    if( rMutex_lock( g_tlsMutex ) )
+    {
+        mbedtls_ssl_close_notify( &g_tlsConnection.ssl );
+        mbedtls_net_free( &g_tlsConnection.server_fd );
+        if( NULL != getC2PublicKey() )
+        {
+            mbedtls_x509_crt_free( &g_tlsConnection.cacert );
+        }
+        mbedtls_ssl_free( &g_tlsConnection.ssl );
+        mbedtls_ssl_config_free( &g_tlsConnection.conf );
+        mbedtls_ctr_drbg_free( &g_tlsConnection.ctr_drbg );
+        mbedtls_entropy_free( &g_tlsConnection.entropy );
+
+        rMutex_unlock( g_tlsMutex );
+    }
+}
+
+RPRIVATE
 RU32
     RPAL_THREAD_FUNC thread_conn
     (
@@ -632,10 +656,6 @@ RU32
 {
     OBFUSCATIONLIB_DECLARE( defaultDest, RP_HCP_CONFIG_HOME_URL_DEFAULT );
 
-    //RPCHAR effectivePrimary = (RPCHAR)url1;
-    //RU16 effectivePrimaryPort = RP_HCP_CONFIG_HOME_PORT_PRIMARY;
-    //RPCHAR effectiveSecondary = (RPCHAR)url2;
-    //RU16 effectiveSecondaryPort = RP_HCP_CONFIG_HOME_PORT_SECONDARY;
     RPCHAR currentDest = NULL;
     RU16 currentPort = 0;
     RCHAR currentPortStr[ 6 ] = { 0 };
@@ -828,31 +848,15 @@ RU32
         if( !isHeadersSent )
         {
             rpal_debug_warning( "failed to send headers" );
-            rMutex_lock( g_tlsMutex );
-
-            // Clean up all crypto primitives
-            mbedtls_ssl_close_notify( &g_tlsConnection.ssl );
-            mbedtls_net_free( &g_tlsConnection.server_fd );
-            if( NULL != getC2PublicKey() )
-            {
-                mbedtls_x509_crt_free( &g_tlsConnection.cacert );
-            }
-            mbedtls_ssl_free( &g_tlsConnection.ssl );
-            mbedtls_ssl_config_free( &g_tlsConnection.conf );
-            mbedtls_ctr_drbg_free( &g_tlsConnection.ctr_drbg );
-            mbedtls_entropy_free( &g_tlsConnection.entropy );
-
-            rMutex_unlock( g_tlsMutex );
+            closeCloudConnection();
         }
 
         if( isHeadersSent )
         {
             // Notify the modules of the connect.
             RU32 moduleIndex = 0;
-            rpal_debug_info( "comms channel up with the cloud" );
-
-            // Secure channel is up and running, start receiving messages.
-            rEvent_set( g_hcpContext.isCloudOnline );
+            RBOOL isNewConnection = TRUE;
+            rpal_debug_info( "comms channel up with the cloud, waiting for first message" );
 
             do
             {
@@ -860,10 +864,25 @@ RU32
                 rSequence message = NULL;
                 RpHcp_ModuleId targetModuleId = 0;
 
-                if( !recvFrame( &g_hcpContext, &targetModuleId, &messages, 0 ) )
+                // If this is a new connection, we expect a message from the cloud very 
+                // shortly, otherwise it's a problem. But if the connection is established
+                // we can wait for a very long time.
+                if( !recvFrame( &g_hcpContext, 
+                                &targetModuleId, 
+                                &messages, 
+                                isNewConnection ? TLS_FIRST_RECV_TIMEOUT : TLS_NORMAL_RECV_TIMEOUT ) )
                 {
                     rpal_debug_warning( "error receiving frame" );
                     break;
+                }
+
+                // Secure channel is up and running as we've received successfully a single
+                // message from the cloud, start receiving messages.
+                if( isNewConnection )
+                {
+                    isNewConnection = FALSE;
+                    rEvent_set( g_hcpContext.isCloudOnline );
+                    rpal_debug_info( "first message received, signaling channel internally" );
                 }
 
                 // HCP is not a module so check manually
@@ -919,26 +938,12 @@ RU32
                 g_hcpContext.isDoReconnect = FALSE;
             }
 
-            if( rMutex_lock( g_tlsMutex ) )
-            {
-                mbedtls_ssl_close_notify( &g_tlsConnection.ssl );
-                mbedtls_net_free( &g_tlsConnection.server_fd );
-                if( NULL != getC2PublicKey() )
-                {
-                    mbedtls_x509_crt_free( &g_tlsConnection.cacert );
-                }
-                mbedtls_ssl_free( &g_tlsConnection.ssl );
-                mbedtls_ssl_config_free( &g_tlsConnection.conf );
-                mbedtls_ctr_drbg_free( &g_tlsConnection.ctr_drbg );
-                mbedtls_entropy_free( &g_tlsConnection.entropy );
-
-                rMutex_unlock( g_tlsMutex );
-            }
+            closeCloudConnection();
 
             rpal_debug_info( "comms with cloud down" );
         }
 
-        rEvent_wait( g_hcpContext.isBeaconTimeToStop, MSEC_FROM_SEC( 10 ) );
+        rEvent_wait( g_hcpContext.isBeaconTimeToStop, MSEC_FROM_SEC( 5 ) );
         rpal_debug_warning( "cycling destination" );
     }
 
@@ -984,8 +989,6 @@ RBOOL
     return isSuccess;
 }
 
-
-
 RBOOL
     stopBeacons
     (
@@ -1024,9 +1027,17 @@ RBOOL
 {
     RBOOL isSuccess = FALSE;
 
+    // Do not check for toSend not being NULL since we now use it as a small
+    // backward compatible trick to trigger a disconnections.
+
     if( rEvent_wait( g_hcpContext.isCloudOnline, 0 ) )
     {
         isSuccess = sendFrame( &g_hcpContext, sourceModuleId, toSend, FALSE );
+
+        if( !isSuccess )
+        {
+            closeCloudConnection();
+        }
     }
 
     return isSuccess;

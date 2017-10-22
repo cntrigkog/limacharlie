@@ -181,6 +181,54 @@ RBOOL
     return sizeof( ip1 ) == RtlCompareMemory( &ip1, &ip2, sizeof( sizeof( ip1 ) ) );
 }
 
+static
+RBOOL
+    isConnectionAllowed
+    (
+        KernelAcqNetwork* pEvent,
+        RU32 pid
+    )
+{
+    RBOOL isAllowed = FALSE;
+
+    if( pid == g_owner_pid )
+    {
+        return TRUE;
+    }
+
+    if( NULL != pEvent )
+    {
+        if( pEvent->isIncoming )
+        {
+            if( IPPROTO_UDP == pEvent->proto &&
+                ( 53 == pEvent->srcPort ||
+                  ( 67 == pEvent->srcPort &&
+                    68 == pEvent->dstPort ) ||
+                  ( 546 == pEvent->dstPort &&
+                    547 == pEvent->srcPort )  ||
+                  ( 0 == pEvent->dstPort &&
+                    135 == pEvent->srcPort ) ) )
+            {
+                isAllowed = TRUE;
+            }
+        }
+        else
+        {
+            if( IPPROTO_UDP == pEvent->proto &&
+                ( 53 == pEvent->dstPort ||
+                  ( 67 == pEvent->dstPort &&
+                    68 == pEvent->srcPort ) ||
+                  ( 0 == pEvent->srcPort &&
+                    135 == pEvent->dstPort ) ) )
+            {
+                isAllowed = TRUE;
+            }
+        }
+    }
+
+    return isAllowed;
+}
+
 RBOOL
     task_get_new_network
     (
@@ -310,6 +358,7 @@ RBOOL
 
     KeReleaseInStackQueuedSpinLock( &hMutex );
 
+    rpal_debug_kernel( "network segregated" );
     isSuccess = TRUE;
 
     return isSuccess;
@@ -338,7 +387,7 @@ RBOOL
 
     KeReleaseInStackQueuedSpinLock( &hMutex );
 
-    rpal_debug_kernel( "rejoining network." );
+    rpal_debug_kernel( "network rejoined" );
     isSuccess = TRUE;
 
     return isSuccess;
@@ -478,17 +527,8 @@ RVOID
         // If network is being segregated, check if the requestor is our owner.
         if( g_is_network_segregated )
         {
-            if( IPPROTO_UDP == g_connections[ g_nextConnection ].proto &&
-                ( 53 == g_connections[ g_nextConnection ].dstPort ||
-                  ( 135 == g_connections[ g_nextConnection ].srcPort &&
-                    0 == g_connections[ g_nextConnection ].dstPort ) ||
-                  ( 546 == g_connections[ g_nextConnection ].srcPort &&
-                    547 == g_connections[ g_nextConnection ].dstPort ) ) )
-            {
-                // Alawys allow outbound DNS, Windows name resolution and DHCP.
-            }
-            else if( FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) &&
-                     (RU32)metaVals->processId != g_owner_pid )
+            if( FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) &&
+                !isConnectionAllowed( &( g_connections[ g_nextConnection ] ), (RU32)metaVals->processId ) )
             {
                 result->rights &= ~FWPS_RIGHT_ACTION_WRITE;
                 result->actionType = FWP_ACTION_BLOCK;
@@ -552,17 +592,8 @@ RVOID
         // If network is being segregated, check if the requestor is our owner.
         if( g_is_network_segregated )
         {
-            if( IPPROTO_UDP == g_connections[ g_nextConnection ].proto &&
-                ( 53 == g_connections[ g_nextConnection ].srcPort ||
-                  ( 135 == g_connections[ g_nextConnection ].dstPort &&
-                    0 == g_connections[ g_nextConnection ].srcPort ) ||
-                  ( 546 == g_connections[ g_nextConnection ].dstPort &&
-                    547 == g_connections[ g_nextConnection ].srcPort ) ) )
-            {
-                // Alawys allow outbound DNS.
-            }
-            else if( FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) &&
-                     (RU32)metaVals->processId != g_owner_pid )
+            if( FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) &&
+                !isConnectionAllowed( &( g_connections[ g_nextConnection ] ), (RU32)metaVals->processId ) )
             {
                 result->rights &= ~FWPS_RIGHT_ACTION_WRITE;
                 result->actionType = FWP_ACTION_BLOCK;
@@ -623,29 +654,6 @@ RVOID
     if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
     {
         result->actionType = FWP_ACTION_PERMIT;
-    }
-
-    // If network is being segregated, check if the requestor is our owner.
-    if( g_is_network_segregated &&
-        getIpTuple( fixVals->layerId, fixVals, &netEntry ) )
-    {
-        if( IPPROTO_UDP == g_connections[ g_nextConnection ].proto &&
-            ( 53 == g_connections[ g_nextConnection ].srcPort ||
-              ( 135 == g_connections[ g_nextConnection ].dstPort &&
-                0 == g_connections[ g_nextConnection ].srcPort ) ||
-              ( 546 == g_connections[ g_nextConnection ].dstPort &&
-                547 == g_connections[ g_nextConnection ].srcPort ) ) )
-        {
-            // Alawys allow outbound DNS.
-        }
-        else if( FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) &&
-                 (RU32)metaVals->processId != g_owner_pid )
-        {
-            result->rights &= ~FWPS_RIGHT_ACTION_WRITE;
-            result->actionType = FWP_ACTION_BLOCK;
-            rpal_debug_kernel( "blocking (%d != %d) %d -> %d", (RU32)metaVals->processId, g_owner_pid, netEntry.srcPort, netEntry.dstPort );
-            return;
-        }
     }
 
     // Before locking anything check if the packet is of interest
@@ -754,43 +762,19 @@ RVOID
         FWPS_CLASSIFY_OUT* result
     )
 {
-    KernelAcqNetwork netEntry = { 0 };
-
     UNREFERENCED_PARAMETER( data );
     UNREFERENCED_PARAMETER( classifyCtx );
     UNREFERENCED_PARAMETER( flt );
     UNREFERENCED_PARAMETER( flowCtx );
     UNREFERENCED_PARAMETER( metaVals );
+    UNREFERENCED_PARAMETER( fixVals );
 
     if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
     {
         result->actionType = FWP_ACTION_PERMIT;
     }
 
-    // Here we don't care about doing any processing other than deny on segregated network.
-
-    // If network is being segregated, check if the requestor is our owner.
-    if( g_is_network_segregated &&
-        getIpTuple( fixVals->layerId, fixVals, &netEntry ) )
-    {
-        if( IPPROTO_UDP == g_connections[ g_nextConnection ].proto &&
-            ( 53 == g_connections[ g_nextConnection ].dstPort ||
-              ( 135 == g_connections[ g_nextConnection ].srcPort &&
-                0 == g_connections[ g_nextConnection ].dstPort ) ||
-              ( 546 == g_connections[ g_nextConnection ].srcPort &&
-                547 == g_connections[ g_nextConnection ].dstPort ) ) )
-        {
-            // Alawys allow outbound DNS.
-        }
-        else if( FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) &&
-                 (RU32)metaVals->processId != g_owner_pid )
-        {
-            result->rights &= ~FWPS_RIGHT_ACTION_WRITE;
-            result->actionType = FWP_ACTION_BLOCK;
-            rpal_debug_kernel( "blocking (%d != %d) %d -> %d", (RU32)metaVals->processId, g_owner_pid, netEntry.srcPort, netEntry.dstPort );
-            return;
-        }
-    }
+    return;
 }
 
 static NTSTATUS
