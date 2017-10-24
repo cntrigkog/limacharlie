@@ -214,7 +214,7 @@ RBOOL
             {
                 toSend = rpal_blob_getSize( buffer );
                 buffToSend = rpal_blob_getBuffer( buffer );
-
+                
                 do
                 {
                     mbedRet = 0;
@@ -229,6 +229,7 @@ RBOOL
                     if( 0 < mbedRet )
                     {
                         offset += mbedRet;
+
                         if( offset == toSend )
                         {
                             isSent = TRUE;
@@ -642,6 +643,8 @@ RVOID
         mbedtls_ssl_config_free( &g_tlsConnection.conf );
         mbedtls_ctr_drbg_free( &g_tlsConnection.ctr_drbg );
         mbedtls_entropy_free( &g_tlsConnection.entropy );
+
+        rpal_memory_zero( &g_tlsConnection, sizeof( g_tlsConnection ) );
 
         rMutex_unlock( g_tlsMutex );
     }

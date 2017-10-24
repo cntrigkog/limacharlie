@@ -19,7 +19,6 @@ limitations under the License.
 
 #include <rpal.h>
 
-#define RPAL_PLATFORM_DEBUG_LOG
 #ifdef RPAL_PLATFORM_DEBUG
 #ifndef RPAL_PLATFORM_DEBUG_LOG
 #define RPAL_PLATFORM_DEBUG_LOG

@@ -23,7 +23,6 @@ limitations under the License.
 #include <rpHostCommonPlatformLib/rTags.h>
 #include <kernelAcquisitionLib/kernelAcquisitionLib.h>
 #include <networkLib/networkLib.h>
-#include <rpHostCommonPlatformIFaceLib/rpHostCommonPlatformIFaceLib.h>
 
 #define _HISTORY_MAX_LENGTH     (1000)
 #define _HISTORY_MAX_SIZE       (1024*1024*5)
@@ -579,11 +578,6 @@ RVOID
         else
         {
             rpal_debug_info( "network segregation successful" );
-
-            // We use a little trick for backward compatibility to trigger a disconnection
-            // of HCP even though we don't have a direct API to that. We do this to make sure
-            // our connection has not gone stale somehow when segregating.
-            rpHcpI_sendHome( NULL );
         }
     }
     else
@@ -618,11 +612,6 @@ RVOID
         else
         {
             rpal_debug_info( "network rejoined" );
-
-            // We use a little trick for backward compatibility to trigger a disconnection
-            // of HCP even though we don't have a direct API to that. We do this to make sure
-            // our connection has not gone stale somehow when segregating.
-            rpHcpI_sendHome( NULL );
         }
     }
     else

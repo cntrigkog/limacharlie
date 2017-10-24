@@ -328,7 +328,7 @@ RBOOL
     RBOOL isSuccess = FALSE;
 
     rSequence event = NULL;
-    RU8 atomId[ HBS_ATOM_ID_SIZE ] = { 0 };
+    RPU8 pAtomId = NULL;
 
     if( NULL != ( event = rSequence_new() ) )
     {
@@ -336,8 +336,8 @@ RBOOL
             ( NULL == errorMessage || rSequence_addSTRINGA( event, RP_TAGS_ERROR_MESSAGE, errorMessage ) ) )
         {
             hbs_markAsRelated( originalRequest, event );
-            HbsGetThisAtom( originalRequest, (RPU8*)&atomId );
-            HbsSetParentAtom( event, atomId );
+            HbsGetThisAtom( originalRequest, &pAtomId );
+            HbsSetParentAtom( event, pAtomId );
             hbs_timestampEvent( event, 0 );
             isSuccess = notifications_publish( eventType, event );
         }

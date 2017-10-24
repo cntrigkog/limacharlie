@@ -755,8 +755,6 @@ RVOID
     rpHCPId tmpId = { 0 };
     rSequence receipt = NULL;
     _cloudNotifStub* cloudEventStub = NULL;
-    Atom receiptAtom = { 0 };
-    RPU8 tmpAtom = NULL;
     RU32 error = RPAL_ERROR_SUCCESS;
 
     while( rList_getSEQUENCE( notifications, RP_TAGS_HBS_CLOUD_NOTIFICATION, &notif ) )
@@ -807,25 +805,9 @@ RVOID
                 hbs_timestampEvent( cloudEvent, 0 );
                 
                 tmpId = rpHcpI_seqToHcpId( targetId );
-                
+
                 if( NULL != ( receipt = rSequence_new() ) )
                 {
-                    hbs_markAsRelated( cloudEventStub->event, cloudEvent );
-
-                    // Make sure the receipt and cloud event have an atom, this way we can make the results
-                    // a child from it in the future.
-                    hbs_markAsRelated( cloudEventStub->event, receipt );
-                    if( !HbsGetThisAtom( cloudEventStub->event, &tmpAtom ) )
-                    {
-                        atoms_getOneTime( &receiptAtom );
-                        HbsSetThisAtom( receipt, receiptAtom.id );
-                        HbsSetThisAtom( cloudEventStub->event, receiptAtom.id );
-                    }
-                    else
-                    {
-                        HbsSetThisAtom( cloudEventStub->event, tmpAtom );
-                    }
-                    
                     if( !rSequence_addSEQUENCE( receipt, 
                                                 RP_TAGS_HBS_CLOUD_NOTIFICATION, 
                                                 rSequence_duplicate( cloudEvent ) ) )
@@ -1318,6 +1300,10 @@ RPAL_THREAD_FUNC
                             }
                         }
                         rList_shallowFree( exfilList );
+
+                        // We will wait a second to see if whatever condition was preventing the send
+                        // will resolve itself before we retry.
+                        rpal_thread_sleep( MSEC_FROM_SEC( 1 ) );
                     }
                 }
             }

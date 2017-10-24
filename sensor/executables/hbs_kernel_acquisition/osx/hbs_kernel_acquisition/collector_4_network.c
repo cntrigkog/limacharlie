@@ -68,12 +68,27 @@ static RBOOL
             return TRUE;
         }
 
-        if( !sc->netEvent.isIncoming &&
-            53 == sc->netEvent.dstPort )
+        // We allow DNS and DHCP.
+        if( sc->netEvent.isIncoming &&
+            IPPROTO_UDP == sc->netEvent.proto )
         {
-            // We allow DNS outbound.
-            sc->isAllowed = TRUE;
-            return TRUE;
+            if( 53 == sc->netEvent.srcPort ||
+                ( 67 == sc->netEvent.srcPort &&
+                  68 == sc->netEvent.dstPort ) )
+            {
+                sc->isAllowed = TRUE;
+                return TRUE;
+            }
+        }
+        else if( IPPROTO_UDP == sc->netEvent.proto )
+        {
+            if( 53 == sc->netEvent.dstPort ||
+                ( 67 == sc->netEvent.dstPort &&
+                  68 == sc->netEvent.srcPort ) )
+            {
+                sc->isAllowed = TRUE;
+                return TRUE;
+            }
         }
 
         if( g_owner_pid == sc->netEvent.pid ||
