@@ -40,17 +40,71 @@ static uint32_t g_nextDns = 0;
 static uint32_t g_socketsPending = 0;
 static RBOOL g_shuttingDown = FALSE;
 
+static RBOOL g_is_network_segregated = FALSE;
+extern int g_owner_pid;
+
 typedef struct
 {
     RBOOL isReported;
     RBOOL isConnected;
+    RBOOL isAllowed;
     int addrFamily;
-    int sockType;
-    struct sockaddr_in peerAtConnect4;
-    struct sockaddr_in6 peerAtConnect6;
+    RBOOL isComplete;
     KernelAcqNetwork netEvent;
     
 } SockCookie;
+
+static RBOOL
+    isConnectionAllowed
+    (
+        SockCookie* sc
+    )
+{
+    if( g_is_network_segregated &&
+        NULL != sc )
+    {
+        if( sc->isAllowed )
+        {
+            return TRUE;
+        }
+
+        // We allow DNS and DHCP.
+        if( sc->netEvent.isIncoming &&
+            IPPROTO_UDP == sc->netEvent.proto )
+        {
+            if( 53 == sc->netEvent.srcPort ||
+                ( 67 == sc->netEvent.srcPort &&
+                  68 == sc->netEvent.dstPort ) )
+            {
+                sc->isAllowed = TRUE;
+                return TRUE;
+            }
+        }
+        else if( IPPROTO_UDP == sc->netEvent.proto )
+        {
+            if( 53 == sc->netEvent.dstPort ||
+                ( 67 == sc->netEvent.dstPort &&
+                  68 == sc->netEvent.srcPort ) )
+            {
+                sc->isAllowed = TRUE;
+                return TRUE;
+            }
+        }
+
+        if( g_owner_pid == sc->netEvent.pid ||
+            g_owner_pid == proc_selfpid() )
+        {
+            sc->isAllowed = TRUE;
+            return TRUE;
+        }
+
+        return FALSE;
+    }
+    else
+    {
+        return TRUE;
+    }
+}
 
 static void
     next_connection
@@ -151,11 +205,12 @@ errno_t
             if( NULL != ( sc = rpal_memory_alloc( sizeof( SockCookie ) ) ) )
             {
                 sc->addrFamily = addrFamily;
-                sc->sockType = sockType;
                 sc->netEvent.proto = (RU8)protocol;
                 sc->netEvent.ts = rpal_time_getLocal();
                 sc->netEvent.pid = proc_selfpid();
                 sc->isReported = FALSE;
+                sc->isAllowed = FALSE;
+                sc->isComplete = FALSE;
                 
                 *cookie = sc;
                 ret = KERN_SUCCESS;
@@ -215,10 +270,21 @@ RBOOL
     struct sockaddr_in remote4 = { 0 };
     struct sockaddr_in6 local6 = { 0 };
     struct sockaddr_in6 remote6 = { 0 };
-    RU32 curPid = 0;
     
     if( NULL != sc )
     {
+        if( sc->isComplete )
+        {
+            return TRUE;
+        }
+
+        if( 0 == sc->netEvent.pid )
+        {
+            sc->netEvent.pid = proc_selfpid();
+
+            sc->isComplete = TRUE;
+        }
+
         if( PF_INET == sc->addrFamily )
         {
             isIpV6 = FALSE;
@@ -228,32 +294,23 @@ RBOOL
             isIpV6 = TRUE;
         }
         
-        curPid = proc_selfpid();
-        if( 0 != curPid && curPid != sc->netEvent.pid )
-        {
-            // The socket may have been created in a process different than
-            // the socket now using it. If it's the case, use the new effective pid.
-            sc->netEvent.pid = curPid;
-        }
-        
         if( !isIpV6 )
         {
             if( 0 != ( ret = sock_getsockname( so, (struct sockaddr*)&local4, sizeof( local4 ) ) ) )
             {
                 rpal_debug_info( "^^^^^^ ERROR getting local sockname4: %d", ret );
+                sc->isComplete = FALSE;
             }
-            
-            if( 0 != ( ret = sock_getpeername( so, (struct sockaddr*)&remote4, sizeof( remote4 ) ) ) ||
-                0 == remote4.sin_addr.s_addr )
+
+            if( NULL != remote )
             {
-                if( NULL != remote )
-                {
-                    memcpy( &remote4, (struct sockaddr_in*)remote, sizeof( remote4 ) );
-                }
-                else if( 0 != sc->peerAtConnect4.sin_addr.s_addr )
-                {
-                    memcpy( &remote4, &sc->peerAtConnect4, sizeof( remote4 ) );
-                }
+                memcpy( &remote4, ( struct sockaddr_in* )remote, sizeof( remote4 ) );
+            }
+            else if( 0 != ( ret = sock_getpeername( so, ( struct sockaddr* )&remote4, sizeof( remote4 ) ) ) ||
+                     0 == remote4.sin_addr.s_addr )
+            {
+                rpal_debug_info( "^^^^^^ ERROR getting remote sockname5: %d", ret );
+                sc->isComplete = FALSE;
             }
         }
         else
@@ -262,11 +319,17 @@ RBOOL
             if( 0 != ( ret = sock_getsockname( so, (struct sockaddr*)&local6, sizeof( local6 ) ) ) )
             {
                 rpal_debug_info( "^^^^^^ ERROR getting local sockname6: %d", ret );
+                sc->isComplete = FALSE;
             }
-            if( 0 != ( ret = sock_getpeername( so, (struct sockaddr*)&remote6, sizeof( remote6 ) ) ) &&
-                NULL != remote )
+
+            if( NULL != remote )
             {
-                memcpy( &remote6, (struct sockaddr_in6*)remote, sizeof( remote6 ) );
+                memcpy( &remote6, ( struct sockaddr_in6* )remote, sizeof( remote6 ) );
+            }
+            else if( 0 != ( ret = sock_getpeername( so, (struct sockaddr*)&remote6, sizeof( remote6 ) ) ) )
+            {
+                rpal_debug_info( "^^^^^^ ERROR getting remote sockname6: %d", ret );
+                sc->isComplete = FALSE;
             }
         }
         
@@ -321,25 +384,6 @@ RBOOL
             }
         }
         
-        if( !isIpV6 )
-        {
-            // rpal_debug_info( "^^^^^^ CONNECTION V4 (%d): incoming=%d 0x%08X:%d ---> 0x%08X:%d",
-            //                  (RU32)sc->netEvent.proto,
-            //                  (RU32)sc->netEvent.isIncoming,
-            //                  sc->netEvent.srcIp.value.v4,
-            //                  (RU32)sc->netEvent.srcPort,
-            //                  sc->netEvent.dstIp.value.v4,
-            //                  (RU32)sc->netEvent.dstPort );
-        }
-        else
-        {
-            // rpal_debug_info( "^^^^^^ CONNECTION V6 (%d): incoming=%d %d ---> %d",
-            //                  (RU32)sc->netEvent.proto,
-            //                  (RU32)sc->netEvent.isIncoming,
-            //                  (RU32)sc->netEvent.srcPort,
-            //                  (RU32)sc->netEvent.dstPort );
-        }
-        
         isPopulated = TRUE;
     }
     
@@ -368,6 +412,8 @@ errno_t
     
     if( NULL != cookie )
     {
+        populateCookie( sc, so, from );
+
         // Report on the connection event
         if( !sc->isReported )
         {
@@ -376,7 +422,10 @@ errno_t
                 sc->netEvent.isIncoming = TRUE;
             }
             
-            populateCookie( sc, so, from );
+            if( !isConnectionAllowed( sc ) )
+            {
+                return EPERM;
+            }
             
             rpal_mutex_lock( g_collector_4_mutex );
         
@@ -385,6 +434,11 @@ errno_t
             next_connection();
             
             rpal_mutex_unlock( g_collector_4_mutex );
+        }
+
+        if( !isConnectionAllowed( sc ) )
+        {
+            return EPERM;
         }
         
         // See if we need to report on any content based parsing
@@ -455,12 +509,17 @@ errno_t
     if( NULL != cookie &&
         !sc->isReported )
     {
+        populateCookie( sc, so, to );
+
         if( !sc->isConnected )
         {
             sc->netEvent.isIncoming = FALSE;
         }
-        
-        populateCookie( sc, so, to );
+
+        if( !isConnectionAllowed( sc ) )
+        {
+            return EPERM;
+        }
         
         rpal_mutex_lock( g_collector_4_mutex );
     
@@ -489,17 +548,12 @@ errno_t
     {
         sc->netEvent.isIncoming = TRUE;
         sc->isConnected = TRUE;
-        
-        if( NULL != from )
+
+        populateCookie( sc, so, from );
+
+        if( !isConnectionAllowed( sc ) )
         {
-            if( PF_INET == sc->addrFamily )
-            {
-                memcpy( &sc->peerAtConnect4, (struct sockaddr_in*)from, sizeof( sc->peerAtConnect4 ) );
-            }
-            else
-            {
-                memcpy( &sc->peerAtConnect6, (struct sockaddr_in6*)from, sizeof( sc->peerAtConnect6 ) );
-            }
+            return EPERM;
         }
     }
     
@@ -522,16 +576,11 @@ errno_t
         sc->netEvent.isIncoming = FALSE;
         sc->isConnected = TRUE;
         
-        if( NULL != to )
+        populateCookie( sc, so, to );
+
+        if( !isConnectionAllowed( sc ) )
         {
-            if( PF_INET == sc->addrFamily )
-            {
-                memcpy( &sc->peerAtConnect4, (struct sockaddr_in*)to, sizeof( sc->peerAtConnect4 ) );
-            }
-            else
-            {
-                memcpy( &sc->peerAtConnect6, (struct sockaddr_in6*)to, sizeof( sc->peerAtConnect6 ) );
-            }
+            return EPERM;
         }
     }
     
@@ -697,6 +746,46 @@ int
 }
 
 int
+    task_segregate_network
+    (
+        void* pArgs,
+        int argsSize,
+        void* pResult,
+        uint32_t* resultSize
+    )
+{
+    int ret = 0;
+    
+    rpal_mutex_lock( g_collector_4_mutex );
+    
+    g_is_network_segregated = TRUE;
+
+    rpal_mutex_unlock( g_collector_4_mutex );
+
+    return ret;
+}
+
+int
+    task_rejoin_network
+    (
+        void* pArgs,
+        int argsSize,
+        void* pResult,
+        uint32_t* resultSize
+    )
+{
+    int ret = 0;
+
+    rpal_mutex_lock( g_collector_4_mutex );
+
+    g_is_network_segregated = FALSE;
+
+    rpal_mutex_unlock( g_collector_4_mutex );
+
+    return ret;
+}
+
+int
     collector_4_initialize
     (
         void* d
@@ -708,6 +797,8 @@ int
     if( NULL != ( g_collector_4_mutex = rpal_mutex_create() ) &&
         NULL != ( g_collector_4_mutex_dns = rpal_mutex_create() ) )
     {
+        g_is_network_segregated = FALSE;
+
         if( register_filter( 0, AF_INET, SOCK_STREAM, IPPROTO_TCP ) &&
             register_filter( 1, AF_INET6, SOCK_STREAM, IPPROTO_TCP ) &&
             register_filter( 2, AF_INET, SOCK_DGRAM, IPPROTO_UDP ) &&

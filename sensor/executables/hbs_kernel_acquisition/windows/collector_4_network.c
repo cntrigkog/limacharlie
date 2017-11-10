@@ -18,6 +18,8 @@ limitations under the License.
 #include "helpers.h"
 #include <kernelAcquisitionLib/common.h>
 
+extern RU32 g_owner_pid;
+
 #pragma warning(disable:4127)       // constant expressions
 
 #ifndef _NUM_BUFFERED_CONNECTIONS
@@ -41,6 +43,8 @@ typedef struct
     GUID flGuid;
     RBOOL flActive;
 } LayerInfo;
+
+static RBOOL g_is_network_segregated = FALSE;
 
 RVOID
     coAuthConnect
@@ -68,6 +72,18 @@ RVOID
 
 RVOID
     coInboundTransport
+    (
+        const FWPS_INCOMING_VALUES* fixVals,
+        const FWPS_INCOMING_METADATA_VALUES* metaVals,
+        RPVOID data,
+        const void* classifyCtx,
+        const FWPS_FILTER* flt,
+        RU64 flowCtx,
+        FWPS_CLASSIFY_OUT* result
+    );
+
+RVOID
+    coOutboundTransport
     (
         const FWPS_INCOMING_VALUES* fixVals,
         const FWPS_INCOMING_METADATA_VALUES* metaVals,
@@ -120,12 +136,28 @@ static LayerInfo g_layerInboundTransport6 = {
     coInboundTransport
 };
 
+static LayerInfo g_layerOutboundTransport4 = {
+    _WCH( "slOutboundTransport4" ),
+    _WCH( "coOutboundTransport4" ),
+    _WCH( "flOutboundTransport4" ),
+    coOutboundTransport
+};
+
+static LayerInfo g_layerOutboundTransport6 = {
+    _WCH( "slOutboundTransport6" ),
+    _WCH( "coOutboundTransport6" ),
+    _WCH( "flOutboundTransport6" ),
+    coOutboundTransport
+};
+
 static LayerInfo* g_layers[] = { &g_layerAuthConnect4,
                                  &g_layerAuthConnect6,
                                  &g_layerAuthRecvAccept4,
                                  &g_layerAuthRecvAccept6,
                                  &g_layerInboundTransport4,
-                                 &g_layerInboundTransport6 };
+                                 &g_layerInboundTransport6,
+                                 &g_layerOutboundTransport4,
+                                 &g_layerOutboundTransport6 };
 
 static HANDLE g_stateChangeHandle = NULL;
 static HANDLE g_engineHandle = NULL;
@@ -137,6 +169,65 @@ static RU32 g_nextConnection = 0;
 static KSPIN_LOCK g_collector_4_mutex_dns = { 0 };
 static RU8 g_dns[ _NUM_BUFFERED_DNS_BYTES ] = { 0 };
 static RU32 g_nextDns = 0;
+
+static
+RBOOL
+    isIpEqual
+    (
+        RIpAddress ip1,
+        RIpAddress ip2
+    )
+{
+    return sizeof( ip1 ) == RtlCompareMemory( &ip1, &ip2, sizeof( sizeof( ip1 ) ) );
+}
+
+static
+RBOOL
+    isConnectionAllowed
+    (
+        KernelAcqNetwork* pEvent,
+        RU32 pid
+    )
+{
+    RBOOL isAllowed = FALSE;
+
+    if( pid == g_owner_pid )
+    {
+        return TRUE;
+    }
+
+    if( NULL != pEvent )
+    {
+        if( pEvent->isIncoming )
+        {
+            if( IPPROTO_UDP == pEvent->proto &&
+                ( 53 == pEvent->srcPort ||
+                  ( 67 == pEvent->srcPort &&
+                    68 == pEvent->dstPort ) ||
+                  ( 546 == pEvent->dstPort &&
+                    547 == pEvent->srcPort )  ||
+                  ( 0 == pEvent->dstPort &&
+                    135 == pEvent->srcPort ) ) )
+            {
+                isAllowed = TRUE;
+            }
+        }
+        else
+        {
+            if( IPPROTO_UDP == pEvent->proto &&
+                ( 53 == pEvent->dstPort ||
+                  ( 67 == pEvent->dstPort &&
+                    68 == pEvent->srcPort ) ||
+                  ( 0 == pEvent->srcPort &&
+                    135 == pEvent->dstPort ) ) )
+            {
+                isAllowed = TRUE;
+            }
+        }
+    }
+
+    return isAllowed;
+}
 
 RBOOL
     task_get_new_network
@@ -243,7 +334,67 @@ RBOOL
     return isSuccess;
 }
 
-static NTSTATUS
+
+RBOOL
+    task_segregate_network
+    (
+        RPU8 pArgs,
+        RU32 argsSize,
+        RPU8 pResult,
+        RU32* resultSize
+    )
+{
+    RBOOL isSuccess = FALSE;
+    KLOCK_QUEUE_HANDLE hMutex = { 0 };
+
+    UNREFERENCED_PARAMETER( pResult );
+    UNREFERENCED_PARAMETER( resultSize );
+    UNREFERENCED_PARAMETER( pArgs );
+    UNREFERENCED_PARAMETER( argsSize );
+
+    KeAcquireInStackQueuedSpinLock( &g_collector_4_mutex, &hMutex );
+
+    g_is_network_segregated = TRUE;
+
+    KeReleaseInStackQueuedSpinLock( &hMutex );
+
+    rpal_debug_kernel( "network segregated" );
+    isSuccess = TRUE;
+
+    return isSuccess;
+}
+
+RBOOL
+    task_rejoin_network
+    (
+        RPU8 pArgs,
+        RU32 argsSize,
+        RPU8 pResult,
+        RU32* resultSize
+    )
+{
+    RBOOL isSuccess = FALSE;
+    KLOCK_QUEUE_HANDLE hMutex = { 0 };
+
+    UNREFERENCED_PARAMETER( pArgs );
+    UNREFERENCED_PARAMETER( argsSize );
+    UNREFERENCED_PARAMETER( pResult );
+    UNREFERENCED_PARAMETER( resultSize );
+
+    KeAcquireInStackQueuedSpinLock( &g_collector_4_mutex, &hMutex );
+
+    g_is_network_segregated = FALSE;
+
+    KeReleaseInStackQueuedSpinLock( &hMutex );
+
+    rpal_debug_kernel( "network rejoined" );
+    isSuccess = TRUE;
+
+    return isSuccess;
+}
+
+
+static RBOOL
     getIpTuple
     (
         RU16 layerId,
@@ -251,7 +402,7 @@ static NTSTATUS
         KernelAcqNetwork* netEntry
     )
 {
-    NTSTATUS status = STATUS_SUCCESS;
+    RBOOL isSuccess = TRUE;
 
     switch( layerId )
     {
@@ -315,13 +466,33 @@ static NTSTATUS
             netEntry->dstPort = fixedVals->incomingValue[ FWPS_FIELD_INBOUND_TRANSPORT_V6_IP_REMOTE_PORT ].value.uint16;
             netEntry->proto = fixedVals->incomingValue[ FWPS_FIELD_INBOUND_TRANSPORT_V6_IP_PROTOCOL ].value.uint8;
             break;
+        case FWPS_LAYER_OUTBOUND_TRANSPORT_V4:
+            netEntry->isIncoming = FALSE; // We say it's outgoing but in reality we're not sure
+            netEntry->srcIp.isV6 = FALSE;
+            netEntry->dstIp.isV6 = FALSE;
+            netEntry->srcIp.value.v4 = RtlUlongByteSwap( fixedVals->incomingValue[ FWPS_FIELD_OUTBOUND_TRANSPORT_V4_IP_LOCAL_ADDRESS ].value.uint32 );
+            netEntry->srcPort = fixedVals->incomingValue[ FWPS_FIELD_OUTBOUND_TRANSPORT_V4_IP_LOCAL_PORT ].value.uint16;
+            netEntry->dstIp.value.v4 = RtlUlongByteSwap( fixedVals->incomingValue[ FWPS_FIELD_OUTBOUND_TRANSPORT_V4_IP_REMOTE_ADDRESS ].value.uint32 );
+            netEntry->dstPort = fixedVals->incomingValue[ FWPS_FIELD_OUTBOUND_TRANSPORT_V4_IP_REMOTE_PORT ].value.uint16;
+            netEntry->proto = fixedVals->incomingValue[ FWPS_FIELD_OUTBOUND_TRANSPORT_V4_IP_PROTOCOL ].value.uint8;
+            break;
+        case FWPS_LAYER_OUTBOUND_TRANSPORT_V6:
+            netEntry->isIncoming = FALSE; // We say it's outgoing but in reality we're not sure
+            netEntry->srcIp.isV6 = TRUE;
+            netEntry->dstIp.isV6 = TRUE;
+            netEntry->srcIp.value.v6 = *(RIpV6*)fixedVals->incomingValue[ FWPS_FIELD_OUTBOUND_TRANSPORT_V6_IP_LOCAL_ADDRESS ].value.byteArray16;
+            netEntry->srcPort = fixedVals->incomingValue[ FWPS_FIELD_OUTBOUND_TRANSPORT_V6_IP_LOCAL_PORT ].value.uint16;
+            netEntry->dstIp.value.v6 = *(RIpV6*)fixedVals->incomingValue[ FWPS_FIELD_OUTBOUND_TRANSPORT_V6_IP_REMOTE_ADDRESS ].value.byteArray16;
+            netEntry->dstPort = fixedVals->incomingValue[ FWPS_FIELD_INBOUND_TRANSPORT_V6_IP_REMOTE_PORT ].value.uint16;
+            netEntry->proto = fixedVals->incomingValue[ FWPS_FIELD_OUTBOUND_TRANSPORT_V6_IP_PROTOCOL ].value.uint8;
+            break;
 
         default:
             rpal_debug_kernel( "Unknown layer protocol family: 0x%08X", layerId );
-            status = STATUS_INTERNAL_ERROR;
+            isSuccess = FALSE;
     }
 
-    return TRUE;
+    return isSuccess;
 }
 
 RVOID
@@ -346,13 +517,27 @@ RVOID
 
     if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
     {
-        result->actionType = FWP_ACTION_CONTINUE;
+        result->actionType = FWP_ACTION_PERMIT;
     }
 
     KeAcquireInStackQueuedSpinLock( &g_collector_4_mutex, &hMutex );
 
     if( getIpTuple( fixVals->layerId, fixVals, &g_connections[ g_nextConnection ] ) )
     {
+        // If network is being segregated, check if the requestor is our owner.
+        if( g_is_network_segregated )
+        {
+            if( FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) &&
+                !isConnectionAllowed( &( g_connections[ g_nextConnection ] ), (RU32)metaVals->processId ) )
+            {
+                result->rights &= ~FWPS_RIGHT_ACTION_WRITE;
+                result->actionType = FWP_ACTION_BLOCK;
+                rpal_debug_kernel( "blocking (%d != %d) %d -> %d", (RU32)metaVals->processId, g_owner_pid, g_connections[ g_nextConnection ].srcPort, g_connections[ g_nextConnection ].dstPort );
+                KeReleaseInStackQueuedSpinLock( &hMutex );
+                return;
+            }
+        }
+
         if( FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) )
         {
             g_connections[ g_nextConnection ].pid = (RU32)metaVals->processId;
@@ -397,13 +582,27 @@ RVOID
 
     if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
     {
-        result->actionType = FWP_ACTION_CONTINUE;
+        result->actionType = FWP_ACTION_PERMIT;
     }
 
     KeAcquireInStackQueuedSpinLock( &g_collector_4_mutex, &hMutex );
 
     if( getIpTuple( fixVals->layerId, fixVals, &g_connections[ g_nextConnection ] ) )
     {
+        // If network is being segregated, check if the requestor is our owner.
+        if( g_is_network_segregated )
+        {
+            if( FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) &&
+                !isConnectionAllowed( &( g_connections[ g_nextConnection ] ), (RU32)metaVals->processId ) )
+            {
+                result->rights &= ~FWPS_RIGHT_ACTION_WRITE;
+                result->actionType = FWP_ACTION_BLOCK;
+                rpal_debug_kernel( "blocking (%d != %d) %d -> %d", (RU32)metaVals->processId, g_owner_pid, g_connections[ g_nextConnection ].srcPort, g_connections[ g_nextConnection ].dstPort );
+                KeReleaseInStackQueuedSpinLock( &hMutex );
+                return;
+            }
+        }
+
         if( FWPS_IS_METADATA_FIELD_PRESENT( metaVals, FWPS_METADATA_FIELD_PROCESS_ID ) )
         {
             g_connections[ g_nextConnection ].pid = (RU32)metaVals->processId;
@@ -454,7 +653,7 @@ RVOID
 
     if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
     {
-        result->actionType = FWP_ACTION_CONTINUE;
+        result->actionType = FWP_ACTION_PERMIT;
     }
 
     // Before locking anything check if the packet is of interest
@@ -548,6 +747,34 @@ RVOID
     }
 
     KeReleaseInStackQueuedSpinLock( &hMutex );
+}
+
+
+RVOID
+    coOutboundTransport
+    (
+        const FWPS_INCOMING_VALUES* fixVals,
+        const FWPS_INCOMING_METADATA_VALUES* metaVals,
+        RPVOID data,
+        const void* classifyCtx,
+        const FWPS_FILTER* flt,
+        RU64 flowCtx,
+        FWPS_CLASSIFY_OUT* result
+    )
+{
+    UNREFERENCED_PARAMETER( data );
+    UNREFERENCED_PARAMETER( classifyCtx );
+    UNREFERENCED_PARAMETER( flt );
+    UNREFERENCED_PARAMETER( flowCtx );
+    UNREFERENCED_PARAMETER( metaVals );
+    UNREFERENCED_PARAMETER( fixVals );
+
+    if( IS_FLAG_ENABLED( result->rights, FWPS_RIGHT_ACTION_WRITE ) )
+    {
+        result->actionType = FWP_ACTION_PERMIT;
+    }
+
+    return;
 }
 
 static NTSTATUS
@@ -711,7 +938,7 @@ static NTSTATUS
         filter.filterKey = g_layers[ i ]->flGuid;
         filter.layerKey = g_layers[ i ]->guid;
         filter.displayData.name = g_layers[ i ]->flName;
-        filter.action.type = FWP_ACTION_CALLOUT_INSPECTION;
+        filter.action.type = FWP_ACTION_CALLOUT_TERMINATING;
         filter.action.calloutKey = g_layers[ i ]->coGuid;
         filter.subLayerKey = g_layers[ i ]->slGuid;
         filter.weight.type = FWP_EMPTY;
@@ -872,6 +1099,32 @@ static NTSTATUS
             break;
         }
 
+        if( NT_SUCCESS( status = ExUuidCreate( &g_layerOutboundTransport4.slGuid ) ) &&
+            NT_SUCCESS( status = ExUuidCreate( &g_layerOutboundTransport4.coGuid ) ) &&
+            NT_SUCCESS( status = ExUuidCreate( &g_layerOutboundTransport4.flGuid ) ) )
+        {
+            g_layerOutboundTransport4.guid = FWPM_LAYER_OUTBOUND_TRANSPORT_V4;
+        }
+
+        if( !NT_SUCCESS( status ) )
+        {
+            rpal_debug_kernel( "Failed to create outboundTransport4 GUIDs: 0x%08X", status );
+            break;
+        }
+
+        if( NT_SUCCESS( status = ExUuidCreate( &g_layerOutboundTransport6.slGuid ) ) &&
+            NT_SUCCESS( status = ExUuidCreate( &g_layerOutboundTransport6.coGuid ) ) &&
+            NT_SUCCESS( status = ExUuidCreate( &g_layerOutboundTransport6.flGuid ) ) )
+        {
+            g_layerOutboundTransport6.guid = FWPM_LAYER_OUTBOUND_TRANSPORT_V6;
+        }
+
+        if( !NT_SUCCESS( status ) )
+        {
+            rpal_debug_kernel( "Failed to create outboundTransport6 GUIDs: 0x%08X", status );
+            break;
+        }
+
         if( !NT_SUCCESS( status = FwpmBfeStateSubscribeChanges( deviceObject,
                                                                 stateChangeCallback,
                                                                 (RPVOID)deviceObject,
@@ -934,6 +1187,8 @@ RBOOL
 #ifndef _DISABLE_COLLECTOR_4
     KeInitializeSpinLock( &g_collector_4_mutex );
     KeInitializeSpinLock( &g_collector_4_mutex_dns );
+
+    g_is_network_segregated = FALSE;
 
     status = installWfp( deviceObject );
 

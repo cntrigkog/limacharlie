@@ -805,11 +805,9 @@ RVOID
                 hbs_timestampEvent( cloudEvent, 0 );
                 
                 tmpId = rpHcpI_seqToHcpId( targetId );
-                
+
                 if( NULL != ( receipt = rSequence_new() ) )
                 {
-                    hbs_markAsRelated( cloudEventStub->event, cloudEvent );
-
                     if( !rSequence_addSEQUENCE( receipt, 
                                                 RP_TAGS_HBS_CLOUD_NOTIFICATION, 
                                                 rSequence_duplicate( cloudEvent ) ) )
@@ -1302,6 +1300,10 @@ RPAL_THREAD_FUNC
                             }
                         }
                         rList_shallowFree( exfilList );
+
+                        // We will wait a second to see if whatever condition was preventing the send
+                        // will resolve itself before we retry.
+                        rpal_thread_sleep( MSEC_FROM_SEC( 1 ) );
                     }
                 }
             }

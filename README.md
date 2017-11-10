@@ -60,6 +60,13 @@ Live Malware Analysis performed thinking Out of the (Sand)Box.
   <a href="http://malwarelab.co.uk"><img src="https://raw.github.com/refractionPOINT/limacharlie/develop/doc/users/the_malware_lab.png" width="200"></a>
 </p>
 
+### Trials
+
+#### BAE Systems
+<p align="center">
+  <a href="http://www.baesystems.com/"><img src="https://raw.github.com/refractionPOINT/limacharlie/develop/doc/users/bae.jpg" width="200"></a>
+</p>
+
 ## Core Values
 LIMA CHARLIE's design and implementation is based on the following core values:
 * Reduce friction for the development of detections and operations.
