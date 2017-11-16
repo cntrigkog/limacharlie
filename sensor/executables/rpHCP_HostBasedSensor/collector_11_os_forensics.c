@@ -200,18 +200,18 @@ RPVOID
 
     UNREFERENCED_PARAMETER( ctx );
 
-    if( NULL != ( dummy = rSequence_new() ) )
+    rpal_debug_info( "beginning full os snapshots run" );
+    while( !rEvent_wait( isTimeToStop, MSEC_FROM_SEC( 10 ) ) &&
+            rpal_memory_isValid( isTimeToStop ) &&
+            i < ARRAY_N_ELEM( events ) )
     {
-        rpal_debug_info( "beginning full os snapshots run" );
-        while( !rEvent_wait( isTimeToStop, MSEC_FROM_SEC( 10 ) ) &&
-               rpal_memory_isValid( isTimeToStop ) &&
-               i < ARRAY_N_ELEM( events ) )
+        if( NULL != ( dummy = rSequence_new() ) )
         {
             hbs_publish( events[ i ], dummy );
             i++;
-        }
 
-        rSequence_free( dummy );
+            rSequence_free( dummy );
+        }
     }
 
     return NULL;

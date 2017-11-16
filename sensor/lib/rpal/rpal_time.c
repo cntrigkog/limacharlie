@@ -51,6 +51,47 @@ RU64
 #endif
 }
 
+RPRIVATE
+RU32
+    _getNumCpus
+    (
+
+    )
+{
+    static RU32 nCores = 0;
+
+    if( 0 != nCores )
+    {
+        return nCores;
+    }
+    {
+#ifdef RPAL_PLATFORM_WINDOWS
+        SYSTEM_INFO sysinfo = { 0 };
+        GetSystemInfo( &sysinfo );
+        nCores = sysinfo.dwNumberOfProcessors;
+#elif defined( RPAL_PLATFORM_MACOSX )
+        int mib[ 4 ] = { CTL_HW, HW_AVAILCPU, 0, 0 };
+        size_t len = sizeof( nCores );
+        sysctl( mib, 2, &nCores, &len, NULL, 0 );
+        if( nCores < 1 )
+        {
+            mib[ 1 ] = HW_NCPU;
+            sysctl( mib, 2, &nCores, &len, NULL, 0 );
+
+            if( nCores < 1 )
+            {
+                nCores = 1;
+            }
+        }
+#elif defined( RPAL_PLATFORM_LINUX )
+        nCores = sysconf( _SC_NPROCESSORS_ONLN );
+#else
+        rpal_debug_not_implemented();
+#endif
+    }
+
+    return nCores;
+}
 
 RBOOL
     rpal_time_getCPU
@@ -232,10 +273,10 @@ RU64
     )
 {
     static RU64 lastLocalTime = 0;
-    static RU64 lastCPUCheck = 0;
     static RU64 lastCPUTime = 0;
     RU64 cpuTime = 0;
     RU64 cpuDelta = 0;
+    RU64 timeDelta = 0;
     RU64 ts = 0;
 
 #ifdef RPAL_PLATFORM_WINDOWS
@@ -248,43 +289,35 @@ RU64
     ts = MSEC_FROM_SEC((RU64)tv.tv_sec) + MSEC_FROM_USEC( (RU64)tv.tv_usec );
 #endif
 
-    if( 0 != lastLocalTime &&
-        MSEC_FROM_SEC( 10 ) < DELTA_OF( lastLocalTime, ts ) )
+    timeDelta = DELTA_OF( lastLocalTime, ts );
+    if( MSEC_FROM_SEC( 10 ) < timeDelta )
     {
-        // Time hasn't been queried since X world-seconds, that's
-        // a long time, check the CPU time to see if hibernation of some
-        // kind has occurred.
-        if( rpal_time_getCPU( &cpuTime ) )
+        if( 0 != lastLocalTime &&
+            rpal_time_getCPU( &cpuTime ) )
         {
-            cpuDelta = MSEC_FROM_USEC( MIN_OF( (RU64)( lastCPUTime - cpuTime ),
-                                       (RU64)( cpuTime - lastCPUTime ) ) );
-            rpal_debug_info( "Delta check: dtime = " RF_U64 " dcpu = " RF_U64, DELTA_OF( lastLocalTime, ts ), cpuDelta );
-            if( MSEC_FROM_SEC( 10 ) < DELTA_OF( cpuDelta,
-                                                DELTA_OF( lastCPUCheck, ts ) ) )
+            if( 0 != lastCPUTime )
             {
-                // Ok, change in CPU is more than Y seconds different than
-                // the wall clock, we can't assume our global offset to be
-                // valid anymore since something is clearly syncing the clock
-                // for us (like VMWare) so we'll reset it.
-                rpal_time_setGlobalOffset( 0 );
-                rpal_debug_info( "detected external clock sync, resetting global offset" );
+                // The CPU Time can overflow.
+                cpuDelta = MIN_OF( lastCPUTime - cpuTime, cpuTime - lastCPUTime );
+                cpuDelta = MSEC_FROM_USEC( cpuDelta );
+                cpuDelta /= _getNumCpus();
+                
+                // We only really care about wall clock time being greater than CPU to indicate
+                // some form of hybernation.
+                if( timeDelta > cpuDelta &&
+                    MSEC_FROM_SEC( 10 ) < timeDelta - cpuDelta )
+                {
+                    rpal_debug_info( "Delta check: dtime = " RF_U64 " dcpu = " RF_U64, timeDelta, cpuDelta );
+                    rpal_time_setGlobalOffset( 0 );
+                    rpal_debug_info( "detected external clock sync, resetting global offset" );
+                }
             }
-        }
-    }
 
-    // Every 30 seconds we cut a new slice of time for CPU
-    // time that we can use to see an external clock sync.
-    if( MSEC_FROM_SEC( 30 ) < DELTA_OF( lastCPUCheck, ts ) )
-    {
-        if( !rpal_time_getCPU( &lastCPUTime ) )
-        {
-            lastCPUTime = 0;
+            lastCPUTime = cpuTime;
         }
 
-        lastCPUCheck = ts;
+        lastLocalTime = ts;
     }
-
-    lastLocalTime = ts;
 
     ts += MSEC_FROM_SEC( rpal_time_getGlobalFromLocal( 0 ) );
 
