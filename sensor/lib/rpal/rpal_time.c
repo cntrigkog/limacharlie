@@ -290,8 +290,14 @@ RU64
     ts = MSEC_FROM_SEC((RU64)tv.tv_sec) + MSEC_FROM_USEC( (RU64)tv.tv_usec );
 #endif
 
+#ifdef RPAL_PLATFORM_64_BIT
     // We get an atomic version of the time and set the current one to be thread safe for the hibernation detection.
     tmpTime = rInterlocked_set64( &lastLocalTime, ts );
+#else
+    // We do not have true atomic exchange for 64 bit ints on 32 bit so we'll do best effort.
+    tmpTime = lastLocalTime;
+    lastLocalTime = ts;
+#endif
 
     timeDelta = DELTA_OF( tmpTime, ts );
     if( MSEC_FROM_SEC( 10 ) < timeDelta )

@@ -1696,16 +1696,22 @@ RU8
     curTime = rpal_time_getLocal();
 
     // We check and set the value in an atomic way to avoid race conditions.
+#ifdef RPAL_PLATFORM_64_BIT
     tmpTime = rInterlocked_set64( &lastCheckTime, curTime );
+#else
+    // We do not have true atomic exchange for 64 bit ints on 32 bit so we'll do best effort.
+    tmpTime = lastCheckTime;
+    lastCheckTime = curTime;
+#endif
 
     if( curTime < tmpTime + 3 )
     {
-        // Use the cached result.
-        percent = lastResult;
-
-        // Also replace the previous last check time to avoid constantly
+        // Replace the previous last check time to avoid constantly
         // chasing an incrementing value.
         lastCheckTime = tmpTime;
+
+        // Use the cached result.
+        percent = lastResult;
     }
     else if( rpal_time_getCPU( &curSystemTime ) &&
              libOs_getProcessTime( 0, &curProcessTime ) )
