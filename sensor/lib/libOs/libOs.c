@@ -1682,8 +1682,9 @@ RU8
     RU64 deltaProcess = 0;
     static RU64 lastSystemTime;
     static RU64 lastProcessTime;
-    static RTIME lastCheckTime = 0;
-    static RU8 lastResult = 0;
+    static volatile RTIME lastCheckTime = 0;
+    static volatile RU8 lastResult = 0;
+    RTIME tmpTime = 0;
     RFLOAT pr = 0;
     RTIME curTime = 0;
 
@@ -1693,9 +1694,18 @@ RU8
     }
 
     curTime = rpal_time_getLocal();
-    if( curTime < lastCheckTime + 3 )
+
+    // We check and set the value in an atomic way to avoid race conditions.
+    tmpTime = rInterlocked_set64( &lastCheckTime, curTime );
+
+    if( curTime < tmpTime + 3 )
     {
+        // Use the cached result.
         percent = lastResult;
+
+        // Also replace the previous last check time to avoid constantly
+        // chasing an incrementing value.
+        lastCheckTime = tmpTime;
     }
     else if( rpal_time_getCPU( &curSystemTime ) &&
              libOs_getProcessTime( 0, &curProcessTime ) )
@@ -1712,7 +1722,6 @@ RU8
                 pr = ( (RFLOAT)deltaProcess / deltaSystem ) * 100;
                 percent = (RU8)pr;
                 lastResult = percent;
-                lastCheckTime = curTime;
             }
         }
 
