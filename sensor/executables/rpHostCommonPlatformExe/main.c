@@ -303,6 +303,7 @@ RU32
     RNCHAR confPath[] = { _SERVICE_CONF_FILE };
     SERVICE_STATUS svcStatus = { 0 };
     RU32 nRetries = 10;
+    RBOOL isDeleted = FALSE;
 
     rpal_debug_info( "uninstalling service" );
 
@@ -363,13 +364,22 @@ RU32
         rpal_debug_error( "could not open SCM: %d", GetLastError() );
     }
 
-    rpal_thread_sleep( MSEC_FROM_SEC( 1 ) );
-
-    if( rpal_file_delete( destPath, FALSE ) )
+    nRetries = 30;
+    while( 0 != nRetries )
     {
-        rpal_debug_info( "service executable deleted" );
+        nRetries--;
+
+        if( rpal_file_delete( destPath, FALSE ) )
+        {
+            rpal_debug_info( "service executable deleted" );
+            isDeleted = TRUE;
+            break;
+        }
+
+        rpal_thread_sleep( MSEC_FROM_SEC( 1 ) );
     }
-    else
+
+    if( !isDeleted )
     {
         rpal_debug_error( "could not delete service executable: %d", GetLastError() );
     }

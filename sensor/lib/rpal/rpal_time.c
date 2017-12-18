@@ -24,6 +24,7 @@ limitations under the License.
     #include <mach/clock_types.h>
     #include <mach/mach_host.h>
     #include <mach/clock.h>
+    #include <sys/sysctl.h>
 #elif defined( RPAL_PLATFORM_LINUX )
     #include <unistd.h>
     #include <sys/time.h>
@@ -272,8 +273,9 @@ RU64
 
     )
 {
-    static RU64 lastLocalTime = 0;
+    static volatile RU64 lastLocalTime = 0;
     static RU64 lastCPUTime = 0;
+    RU64 tmpTime = 0;
     RU64 cpuTime = 0;
     RU64 cpuDelta = 0;
     RU64 timeDelta = 0;
@@ -289,7 +291,16 @@ RU64
     ts = MSEC_FROM_SEC((RU64)tv.tv_sec) + MSEC_FROM_USEC( (RU64)tv.tv_usec );
 #endif
 
-    timeDelta = DELTA_OF( lastLocalTime, ts );
+#ifdef RPAL_PLATFORM_64_BIT
+    // We get an atomic version of the time and set the current one to be thread safe for the hibernation detection.
+    tmpTime = rInterlocked_set64( &lastLocalTime, ts );
+#else
+    // We do not have true atomic exchange for 64 bit ints on 32 bit so we'll do best effort.
+    tmpTime = lastLocalTime;
+    lastLocalTime = ts;
+#endif
+
+    timeDelta = DELTA_OF( tmpTime, ts );
     if( MSEC_FROM_SEC( 10 ) < timeDelta )
     {
         if( 0 != lastLocalTime &&
@@ -315,8 +326,11 @@ RU64
 
             lastCPUTime = cpuTime;
         }
-
-        lastLocalTime = ts;
+    }
+    else
+    {
+        // It was not time to refresh so we will put back the previous value of last check.
+        lastLocalTime = tmpTime;
     }
 
     ts += MSEC_FROM_SEC( rpal_time_getGlobalFromLocal( 0 ) );
