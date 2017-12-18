@@ -24,6 +24,7 @@ limitations under the License.
     #include <mach/clock_types.h>
     #include <mach/mach_host.h>
     #include <mach/clock.h>
+    #include <sys/sysctl.h>
 #elif defined( RPAL_PLATFORM_LINUX )
     #include <unistd.h>
     #include <sys/time.h>
