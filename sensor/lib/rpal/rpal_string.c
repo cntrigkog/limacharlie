@@ -1417,6 +1417,37 @@ RPAL_PLATFORM_TODO(Confirm GLIBC doesnt break this with optimizations)
 }
 
 RBOOL
+    rpal_string_hstoi
+    (
+        RPNCHAR str,
+        RU32* pNum,
+        RBOOL isStrict
+    )
+{
+    RBOOL isSuccess = FALSE;
+    RPNCHAR tmp = 0;
+
+    if( NULL != str &&
+        NULL != pNum )
+    {
+#ifdef RPAL_PLATFORM_WINDOWS
+        *pNum = (RU32)wcstol( str, &tmp, 16 );
+#elif defined( RPAL_PLATFORM_LINUX ) || defined( RPAL_PLATFORM_MACOSX )
+RPAL_PLATFORM_TODO( Confirm GLIBC doesnt break this with optimizations )
+            *pNum = (RU32)strtol( str, &tmp, 16 );
+#endif
+
+        if( NULL != tmp &&
+            ( !isStrict || 0 == *tmp ) )
+        {
+            isSuccess = TRUE;
+        }
+    }
+
+    return isSuccess;
+}
+
+RBOOL
     rpal_string_fill
     (
         RPNCHAR str,

@@ -62,7 +62,7 @@ typedef struct
 #define NETWORKLIB_TCP_STATE_CLOSED                 1
 #define NETWORKLIB_TCP_STATE_LISTEN                 2
 #define NETWORKLIB_TCP_STATE_SYN_SENT               3
-#define NETWORKLIB_TCP_STATE_SYM_RECEIVED           4
+#define NETWORKLIB_TCP_STATE_SYN_RECEIVED           4
 #define NETWORKLIB_TCP_STATE_ESTABLISHED            5
 #define NETWORKLIB_TCP_STATE_FIN_WAIT_1             6
 #define NETWORKLIB_TCP_STATE_FIN_WAIT_2             7

@@ -312,6 +312,14 @@ RBOOL
         RU32* pNum,
         RBOOL isStrict
     );
+
+RBOOL
+    rpal_string_hstoi
+    (
+        RPNCHAR str,
+        RU32* pNum,
+        RBOOL isStrict
+    );
     
 RBOOL
     rpal_string_fill
