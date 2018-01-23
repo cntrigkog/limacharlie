@@ -625,6 +625,9 @@ rSequence
             rSequence_addSTRINGA( info, RP_TAGS_VERSION_MAJOR, version );
         }
 
+        rpal_memory_zero( version, sizeof( version ) );
+        size = sizeof( version );
+
         if( 0 == sysctlbyname( kernVersion, version, &size, NULL, 0 ) )
         {
             rSequence_addSTRINGA( info, RP_TAGS_VERSION_MINOR, version );
