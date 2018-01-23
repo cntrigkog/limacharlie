@@ -152,7 +152,7 @@ NetLib_Tcp4Table*
 
         rpal_memory_free( winTable );
     }
-#else
+#elif defined( RPAL_PLATFORM_LINUX )
     RCHAR procFdDir[] = "/proc/%d/fd";
     RCHAR procFdHandle[] = "/proc/%d/fd/%s";
     RCHAR procNetTcpDir[] = "/proc/net/tcp";
@@ -439,7 +439,7 @@ NetLib_UdpTable*
 
         rpal_memory_free( winTable );
     }
-#else
+#elif defined( RPAL_PLATFORM_LINUX )
     RCHAR procFdDir[] = "/proc/%d/fd";
     RCHAR procFdHandle[] = "/proc/%d/fd/%s";
     RCHAR procNetUdpDir[] = "/proc/net/udp";

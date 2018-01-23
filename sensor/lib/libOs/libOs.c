@@ -618,16 +618,16 @@ rSequence
         char kernRelease[] = "kern.osrelease";
         char kernVersion[] = "kern.version";
         char version[ 256 ] = {0};
-        size_t size = sizeof( str );
+        size_t size = sizeof( version );
 
-        if( 0 == sysctlbyname( kernRelease, str, &size, NULL, 0 ) )
+        if( 0 == sysctlbyname( kernRelease, version, &size, NULL, 0 ) )
         {
-            rSequence_addSTRINGA( info, RP_TAGS_VERSION_MAJOR, str );
+            rSequence_addSTRINGA( info, RP_TAGS_VERSION_MAJOR, version );
         }
 
-        if( 0 == sysctlbyname( kernVersion, str, &size, NULL, 0 ) )
+        if( 0 == sysctlbyname( kernVersion, version, &size, NULL, 0 ) )
         {
-            rSequence_addSTRINGA( info, RP_TAGS_VERSION_MINOR, str );
+            rSequence_addSTRINGA( info, RP_TAGS_VERSION_MINOR, version );
         }
 #else
         rpal_debug_not_implemented();
