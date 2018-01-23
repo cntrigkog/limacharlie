@@ -381,6 +381,28 @@ RVOID
     }
 }
 
+RPRIVATE
+RVOID
+    os_version
+    (
+        rpcm_tag eventType,
+        rSequence event
+    )
+{
+    rSequence versionEx = NULL;
+
+    UNREFERENCED_PARAMETER( eventType );
+
+    if( rpal_memory_isValid( event ) )
+    {
+        if( NULL != ( versionEx = libOs_getOsVersionEx() ) )
+        {
+            hbs_publish( RP_TAGS_NOTIFICATION_OS_VERSION_REP, versionEx );
+            rSequence_free( versionEx );
+        }
+    }
+}
+
 //=============================================================================
 // COLLECTOR INTERFACE
 //=============================================================================
@@ -392,6 +414,7 @@ rpcm_tag collector_11_events[] = { RP_TAGS_NOTIFICATION_OS_SERVICES_REP,
                                    RP_TAGS_NOTIFICATION_OS_KILL_PROCESS_REP,
                                    RP_TAGS_NOTIFICATION_OS_SUSPEND_REP,
                                    RP_TAGS_NOTIFICATION_OS_RESUME_REP,
+                                   RP_TAGS_NOTIFICATION_OS_VERSION_REP,
                                    0 };
 
 RBOOL
@@ -414,7 +437,8 @@ RBOOL
             notifications_subscribe( RP_TAGS_NOTIFICATION_OS_AUTORUNS_REQ, NULL, 0, NULL, os_autoruns ) &&
             notifications_subscribe( RP_TAGS_NOTIFICATION_OS_KILL_PROCESS_REQ, NULL, 0, NULL, os_kill_process ) &&
             notifications_subscribe( RP_TAGS_NOTIFICATION_OS_SUSPEND_REQ, NULL, 0, NULL, os_suspend ) &&
-            notifications_subscribe( RP_TAGS_NOTIFICATION_OS_RESUME_REQ, NULL, 0, NULL, os_resume ) )
+            notifications_subscribe( RP_TAGS_NOTIFICATION_OS_RESUME_REQ, NULL, 0, NULL, os_resume ) &&
+            notifications_subscribe( RP_TAGS_NOTIFICATION_OS_VERSION_REQ, NULL, 0, NULL, os_version ) )
         {
             isSuccess = TRUE;
 
@@ -439,6 +463,7 @@ RBOOL
             notifications_unsubscribe( RP_TAGS_NOTIFICATION_OS_AUTORUNS_REQ, NULL, os_autoruns );
             notifications_unsubscribe( RP_TAGS_NOTIFICATION_OS_SUSPEND_REQ, NULL, os_suspend );
             notifications_unsubscribe( RP_TAGS_NOTIFICATION_OS_RESUME_REQ, NULL, os_resume );
+            notifications_unsubscribe( RP_TAGS_NOTIFICATION_OS_VERSION_REQ, NULL, os_version );
         }
     }
 
@@ -465,6 +490,7 @@ RBOOL
         notifications_unsubscribe( RP_TAGS_NOTIFICATION_OS_KILL_PROCESS_REQ, NULL, os_kill_process );
         notifications_unsubscribe( RP_TAGS_NOTIFICATION_OS_SUSPEND_REQ, NULL, os_suspend );
         notifications_unsubscribe( RP_TAGS_NOTIFICATION_OS_RESUME_REQ, NULL, os_resume );
+        notifications_unsubscribe( RP_TAGS_NOTIFICATION_OS_VERSION_REQ, NULL, os_version );
 
         isSuccess = TRUE;
     }
@@ -537,6 +563,37 @@ HBS_DECLARE_TEST( os_processes )
     rQueue_free( notifQueue );
 }
 
+HBS_DECLARE_TEST( os_version )
+{
+    rQueue notifQueue = NULL;
+    rSequence event = NULL;
+    RU32 size = 0;
+    rpcm_tag tag = 0;
+    rpcm_type type = 0;
+    
+    HBS_ASSERT_TRUE( notifications_subscribe( RP_TAGS_NOTIFICATION_OS_VERSION_REP, NULL, 0, notifQueue, NULL ) );
+
+    HBS_ASSERT_TRUE( rQueue_create( &notifQueue, rSequence_freeWithSize, 10 ) );
+
+    event = rSequence_new();
+    if( HBS_ASSERT_TRUE( NULL != event ) )
+    {
+        os_version( RP_TAGS_NOTIFICATION_OS_VERSION_REQ, event );
+        rSequence_free( event );
+
+        HBS_ASSERT_TRUE( rQueue_getSize( notifQueue, &size ) );
+        HBS_ASSERT_TRUE( 1 == size );
+        HBS_ASSERT_TRUE( rQueue_remove( notifQueue, &event, NULL, 0 ) );
+
+        HBS_ASSERT_TRUE( rSequence_getElement( event, &tag, &type, NULL, &size ) );
+
+        rSequence_free( event );
+    }
+
+    notifications_unsubscribe( RP_TAGS_NOTIFICATION_OS_VERSION_REP, notifQueue, NULL );
+    rQueue_free( notifQueue );
+}
+
 HBS_TEST_SUITE( 11 )
 {
     RBOOL isSuccess = FALSE;
@@ -545,6 +602,7 @@ HBS_TEST_SUITE( 11 )
         NULL != testContext )
     {
         HBS_RUN_TEST( os_processes );
+        HBS_RUN_TEST( os_version );
         isSuccess = TRUE;
     }
 

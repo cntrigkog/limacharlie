@@ -179,6 +179,9 @@ NetLib_Tcp4Table*
 
     if( rpal_file_read( procNetTcpDir, (RPU8*)&infoFile, &size, FALSE ) )
     {
+        // Make sure we safe-cap the end of the file with a NULL.
+        infoFile[ size - 1 ] = 0;
+
         if( NULL != ( inodes = rpal_btree_create( sizeof( _iNodeTcp4Entry ), (rpal_btree_comp_f)_cmpINodeEntries, NULL ) ) )
         {
             // Go line by line in the /proc/net/tcp file.
@@ -462,6 +465,9 @@ NetLib_UdpTable*
 
     if( rpal_file_read( procNetUdpDir, (RPU8*)&infoFile, &size, FALSE ) )
     {
+        // Make sure we safe-cap the end of the file with a NULL.
+        infoFile[ size - 1 ] = 0;
+
         if( NULL != ( inodes = rpal_btree_create( sizeof( _iNodeUdp4Entry ), (rpal_btree_comp_f)_cmpINodeEntries, NULL ) ) )
         {
             // Go line by line in the /proc/net/udp file.

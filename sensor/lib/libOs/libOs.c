@@ -57,6 +57,7 @@ limitations under the License.
 #include <mach/mach.h>
 #elif defined( RPAL_PLATFORM_LINUX )
 #include <mntent.h>
+#include <sys/utsname.h>
 #endif
 #endif
 
@@ -567,6 +568,73 @@ RU32
 #endif
 
     return version;
+}
+
+rSequence
+    libOs_getOsVersionEx
+    (
+
+    )
+{
+    rSequence info = NULL;
+
+    if( NULL != ( info = rSequence_new() ) )
+    {
+#ifdef RPAL_PLATFORM_WINDOWS
+        rSequence servicePack = NULL;
+        OSVERSIONINFOEX versionEx = { 0 };
+
+        versionEx.dwOSVersionInfoSize = sizeof( versionEx );
+
+        // Don't mind the casting, this is just one of those odd Windows things. By setting the Ex struct
+        // size as member size and casting, the API knows it is dealing with an Ex.
+        if( GetVersionEx( (LPOSVERSIONINFO)&versionEx ) )
+        {
+            rSequence_addRU32( info, RP_TAGS_VERSION_MAJOR, versionEx.dwMajorVersion );
+            rSequence_addRU32( info, RP_TAGS_VERSION_MINOR, versionEx.dwMinorVersion );
+            rSequence_addRU32( info, RP_TAGS_BUILD_NUMBER, versionEx.dwBuildNumber );
+            rSequence_addRU16( info, RP_TAGS_SUITE, versionEx.wSuiteMask );
+            rSequence_addRU8( info, RP_TAGS_PRODUCT_TYPE, versionEx.wProductType );
+
+            if( NULL != ( servicePack = rSequence_new() ) )
+            {
+                rSequence_addRU16( servicePack, RP_TAGS_VERSION_MAJOR, versionEx.wServicePackMajor );
+                rSequence_addRU16( servicePack, RP_TAGS_VERSION_MINOR, versionEx.wServicePackMinor );
+                if( !rSequence_addSEQUENCE( info, RP_TAGS_SERVICE_PACK, servicePack ) )
+                {
+                    rSequence_free( servicePack );
+                }
+            }
+        }
+#elif defined( RPAL_PLATFORM_LINUX )
+        struct utsname nameInfo = {0};
+
+        if( 0 == uname( &nameInfo ) )
+        {
+            rSequence_addSTRINGA( info, RP_TAGS_VERSION_MAJOR, nameInfo.release );
+            rSequence_addSTRINGA( info, RP_TAGS_VERSION_MINOR, nameInfo.version );
+        }
+#elif defined( RPAL_PLATFORM_MACOSX )
+        char kernRelease[] = "kern.osrelease";
+        char kernVersion[] = "kern.version";
+        char version[ 256 ] = {0};
+        size_t size = sizeof( str );
+
+        if( 0 == sysctlbyname( kernRelease, str, &size, NULL, 0 ) )
+        {
+            rSequence_addSTRINGA( info, RP_TAGS_VERSION_MAJOR, str );
+        }
+
+        if( 0 == sysctlbyname( kernVersion, str, &size, NULL, 0 ) )
+        {
+            rSequence_addSTRINGA( info, RP_TAGS_VERSION_MINOR, str );
+        }
+#else
+        rpal_debug_not_implemented();
+#endif
+    }
+
+    return info;
 }
 
 

@@ -106,6 +106,12 @@ RU32
 
     );
 
+rSequence
+    libOs_getOsVersionEx
+    (
+
+    );
+
 RBOOL
     libOs_getInstalledPackages
     (
