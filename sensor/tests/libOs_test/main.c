@@ -342,6 +342,49 @@ void
 #endif
 }
 
+void
+    test_version
+    (
+        void
+    )
+{
+    rSequence info = NULL;
+    RPCHAR stringA = NULL;
+    RU32 num32 = 0;
+    RBOOL isOneFound = FALSE;
+
+    info = libOs_getOsVersionEx();
+    CU_ASSERT_NOT_EQUAL_FATAL( info, NULL );
+
+    if( rSequence_getRU32( info, RP_TAGS_VERSION_MAJOR, &num32 ) )
+    {
+        isOneFound = TRUE;
+        rpal_debug_info( "MAJOR NUM32: %d", num32 );
+    }
+
+    if( rSequence_getRU32( info, RP_TAGS_VERSION_MINOR, &num32 ) )
+    {
+        isOneFound = TRUE;
+        rpal_debug_info( "MINOR NUM32: %d", num32 );
+    }
+
+    if( rSequence_getSTRINGA( info, RP_TAGS_VERSION_MAJOR, &stringA ) )
+    {
+        isOneFound = TRUE;
+        rpal_debug_info( "MAJOR STR: %s", stringA );
+    }
+
+    if( rSequence_getSTRINGA( info, RP_TAGS_VERSION_MINOR, &stringA ) )
+    {
+        isOneFound = TRUE;
+        rpal_debug_info( "MINOR STR: %s", stringA );
+    }
+
+    CU_ASSERT_TRUE( isOneFound );
+
+    rSequence_free( info );
+}
+
 int
     main
     (
@@ -372,6 +415,7 @@ int
                     NULL == CU_add_test( suite, "services", test_services ) ||
                     NULL == CU_add_test( suite, "autoruns", test_autoruns ) ||
                     NULL == CU_add_test( suite, "registry", test_registry ) ||
+                    NULL == CU_add_test( suite, "version", test_version ) ||
                     NULL == CU_add_test( suite, "deinitialize", test_deinit ) ||
                     NULL == CU_add_test( suite, "memoryLeaks", test_memoryLeaks ) )
                 {
