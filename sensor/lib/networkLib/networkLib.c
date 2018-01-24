@@ -491,7 +491,7 @@ NetLib_UdpTable*
                     // If we parsed ok, AND if the IP addresses are IPv4.
                     if( 3 != size ||
                         0 != ipLocal[ 8 ] ||
-                        0 == entry.node )
+                        0 == entry.inode )
                     {
                         info = rpal_string_strtok( NULL, '\n', &state );
                         i++;
