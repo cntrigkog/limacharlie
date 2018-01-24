@@ -207,7 +207,8 @@ NetLib_Tcp4Table*
                     // If we parsed ok, AND if the IP addresses are IPv4.
                     if( 6 != size ||
                         0 != ipLocal[ 8 ] ||
-                        0 != ipRemote[ 8 ] )
+                        0 != ipRemote[ 8 ] ||
+                        0 == entry.inode )
                     {
                         info = rpal_string_strtok( NULL, '\n', &state );
                         i++;
@@ -274,7 +275,7 @@ NetLib_Tcp4Table*
 
                     if( !rpal_btree_add( inodes, &entry, TRUE ) )
                     {
-                        rpal_debug_warning( "failed to add tcp inode entry" );
+                        rpal_debug_warning( "failed to add tcp inode entry: %d", entry.inode );
                     }
                 }
 
@@ -489,7 +490,8 @@ NetLib_UdpTable*
 
                     // If we parsed ok, AND if the IP addresses are IPv4.
                     if( 3 != size ||
-                        0 != ipLocal[ 8 ]  )
+                        0 != ipLocal[ 8 ] ||
+                        0 == entry.node )
                     {
                         info = rpal_string_strtok( NULL, '\n', &state );
                         i++;
