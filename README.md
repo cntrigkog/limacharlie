@@ -1,12 +1,14 @@
 # LIMA CHARLIE
 <img src="https://lcio.nyc3.digitaloceanspaces.com/rp.png" width="150">
-<img src="https://lcio.nyc3.digitaloceanspaces.com/lc.png" width="50">
+<img src="https://lcio.nyc3.digitaloceanspaces.com/lc.png" width="100">
 
 ## What is LimaCharlie
 LC is an Open Source, cross-platform (Windows, MacOS, Linux ++), realtime Endpoint Detection and Response sensor.
 The extra-light sensor, once installed on a system provides Flight Data Recorder type information (telemetry on all aspects of the system like processes, DNS, network IO, file IO etc).
+
 The configuration of the sensor can be updated at runtime to send back specific types of events. The sensor also caches the detailed events to be sent back to the cloud on request.
 In addition to advanced "passive" collection of telemetry, the sensor can also be tasked with many investigation actions (like reading process memory) and mitigations (like network-isolate the host).
+
 Ultimately, LC is a highly configurable platform to deliver endpoint capabilities.
 
 ## How to Use LimaCharlie?
@@ -14,6 +16,12 @@ Main support and development is provided by [Refraction Point](https://www.refra
 branch by its more robust architecture, larger feature set, complete automation package and its management interface (fully REST controlled and appliance-delivered).
 
 The community edition is still available through GitHub but it is no longer officially supported.
+
+*Talk to us on the [LimaCharlie Slack Community](http://limacharlie.herokuapp.com/)*
+
+*Stay up to date with new features and detection modules: [@rp_limacharlie](https://twitter.com/rp_limacharlie)*
+
+*For more direct enquiries, contact us at info@refractionpoint.com*
 
 ## Who Uses LimaCharlie?
 *** Due to the sensitivity of their security toolset, several other organizations prefer to keep a lower profile. Contact us if you would like to inquire about specific organization types of using LC. ***
