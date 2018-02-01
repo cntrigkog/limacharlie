@@ -553,6 +553,7 @@ VOID WINAPI
 #define _SERVICE_DIR        _NC("/usr/local/bin/")
 #define _SERVICE_FILE       _NC("/usr/local/bin/rphcp")
 #define _SERVICE_IDENT_FILE _NC("/usr/local/hcp")
+#define _SERVICE_CONF_FILE  _NC("/usr/local/hcp_conf")
 #define _SERVICE_LOAD       _NC("launchctl load ") _SERVICE_DESC_FILE
 #define _SERVICE_START      _NC("launchctl start ") _SERVICE_NAME
 #define _SERVICE_UNLOAD     _NC("launchctl unload ") _SERVICE_DESC_FILE
@@ -688,6 +689,7 @@ RU32
     RNCHAR svcUnload[] = { _SERVICE_UNLOAD };
     RNCHAR svcPath[] = { _SERVICE_FILE };
     RNCHAR identPath[] = { _SERVICE_IDENT_FILE };
+    RNCHAR confPath[] = { _SERVICE_CONF_FILE };
 
     if( 0 != system( svcUnload ) )
     {
@@ -716,6 +718,15 @@ RU32
         else
         {
             rpal_debug_info( "deleted identity file from disk" );
+        }
+
+        if( !rpal_file_delete( confPath, FALSE ) )
+        {
+            rpal_debug_warning( "failed to delete config file from disk, not present?" );
+        }
+        else
+        {
+            rpal_debug_info( "deleted config file from disk" );
         }
     }
 
